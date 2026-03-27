@@ -1,7 +1,15 @@
 """
 SGAM - Sistema de Gestión de Asistencias Médicas
 Módulo: ui.py
-Responsabilidad: Interfaz gráfica con CustomTkinter + calendario interactivo.
+Responsabilidad: Interfaz gráfica con CustomTkinter.
+
+Mejoras v1.2:
+  - Panel de analítica con filtros dinámicos (Tipo, Especialidad) y vista individual.
+  - Foto del médico en el tablero individual.
+  - Título del calendario: Nombre | Tipo | Especialidad.
+  - Leyenda visual de colores debajo del calendario.
+  - Dialogo de filtros para exportación individual y maestro.
+  - Alertas de ingesta mostradas en UI.
 """
 
 import threading
@@ -20,449 +28,623 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from ingestion import cargar_archivo_maestro, cargar_reporte_scanner, extraer_reglas
-from core import procesar_asistencias, calcular_resumen, filtrar_por_empleado, COLOR_MAP
-from export import exportar_reporte_empleado, exportar_todos
+from core import (
+    procesar_asistencias, calcular_resumen, filtrar_por_empleado, COLOR_MAP,
+    obtener_tipos_unicos, obtener_especialidades_unicas,
+)
+from export import (
+    exportar_reporte_empleado, exportar_todos,
+    exportar_filtrado, exportar_maestro_consolidado,
+)
 
 
 # ──────────────────────────────────────────────
-# Configuración visual
+# Configuración visual global
 # ──────────────────────────────────────────────
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 APP_TITLE   = "SGAM – Sistema de Gestión de Asistencias Médicas"
-APP_VERSION = "v1.0.0"
-WIN_WIDTH   = 1280
-WIN_HEIGHT  = 800
+APP_VERSION = "v1.2.0"
+WIN_W, WIN_H = 1380, 860
 
+SIDEBAR_W    = 245
 COLOR_SIDEBAR = "#1F3864"
 COLOR_ACCENT  = "#2E75B6"
 COLOR_BG      = "#F0F4F8"
 COLOR_WHITE   = "#FFFFFF"
 COLOR_TEXT    = "#1F1F1F"
-COLOR_SUCCESS = "#217346"
+COLOR_OK      = "#217346"
 COLOR_WARN    = "#C55A11"
-COLOR_ERROR   = "#C00000"
+COLOR_ERR     = "#C00000"
+COLOR_PURPLE  = "#7030A0"
 
 
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 # Widget: Calendario Mensual
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 class CalendarioWidget(ctk.CTkFrame):
     """
-    Widget reutilizable que muestra un calendario mensual
-    con celdas coloreadas según el estatus de asistencia.
+    Muestra un calendario mensual coloreado con:
+      - Título: Nombre | Mes Año
+      - Subtítulo: Tipo · Especialidad
+      - Foto del médico (si existe)
+      - Leyenda de colores debajo
     """
-
-    DIAS_HEADER = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+    DIAS_HDR = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+    LEYENDA  = [
+        ("#FFD966", "Asistencia"), ("#FF4B4B", "Retardo"),
+        ("#FF8C00", "Falta"),      ("#D9D9D9", "No Laborable"),
+        ("#70AD47", "Vacaciones"), ("#9DC3E6", "Incapacidad"),
+        ("#FFE699", "Permiso"),    ("#BDD7EE", "Comisión"),
+    ]
 
     def __init__(self, master, **kwargs):
         super().__init__(master, fg_color=COLOR_WHITE, corner_radius=10, **kwargs)
-        self._construir_estructura()
+        self._foto_label: Optional[ctk.CTkLabel] = None
+        self._construir()
 
-    def _construir_estructura(self):
-        self.lbl_titulo = ctk.CTkLabel(
-            self, text="Sin datos cargados",
-            font=ctk.CTkFont(family="Calibri", size=14, weight="bold"),
-            text_color=COLOR_SIDEBAR
+    def _construir(self):
+        # ── Foto + Título en la misma fila ──────────────────────────────
+        top = ctk.CTkFrame(self, fg_color=COLOR_WHITE)
+        top.pack(fill="x", padx=12, pady=(10, 2))
+
+        # Placeholder de foto (cuadrado 60×60)
+        self.foto_frame = ctk.CTkFrame(
+            top, width=58, height=58,
+            fg_color="#E8EEF4", corner_radius=8,
         )
-        self.lbl_titulo.pack(pady=(12, 6))
+        self.foto_frame.pack(side="left", padx=(0, 10))
+        self.foto_frame.pack_propagate(False)
+        self._lbl_foto_ico = ctk.CTkLabel(
+            self.foto_frame, text="👤",
+            font=ctk.CTkFont(size=26), text_color="#AAAAAA"
+        )
+        self._lbl_foto_ico.place(relx=0.5, rely=0.5, anchor="center")
 
+        # Contenedor de títulos
+        titulo_frame = ctk.CTkFrame(top, fg_color=COLOR_WHITE)
+        titulo_frame.pack(side="left", fill="x", expand=True)
+
+        self.lbl_nombre = ctk.CTkLabel(
+            titulo_frame, text="Sin datos cargados",
+            font=ctk.CTkFont(family="Calibri", size=13, weight="bold"),
+            text_color=COLOR_SIDEBAR, anchor="w"
+        )
+        self.lbl_nombre.pack(anchor="w")
+
+        self.lbl_perfil = ctk.CTkLabel(
+            titulo_frame, text="",
+            font=ctk.CTkFont(size=10),
+            text_color=COLOR_ACCENT, anchor="w"
+        )
+        self.lbl_perfil.pack(anchor="w")
+
+        self.lbl_periodo = ctk.CTkLabel(
+            titulo_frame, text="",
+            font=ctk.CTkFont(size=9, slant="italic"),
+            text_color="#808080", anchor="w"
+        )
+        self.lbl_periodo.pack(anchor="w")
+
+        # ── Grid del calendario ──────────────────────────────────────────
         self.grid_frame = ctk.CTkFrame(self, fg_color=COLOR_WHITE)
-        self.grid_frame.pack(padx=16, pady=(0, 12))
+        self.grid_frame.pack(padx=12, pady=(4, 2))
 
-        for j, dia_nombre in enumerate(self.DIAS_HEADER):
+        for j, dia in enumerate(self.DIAS_HDR):
             lbl = ctk.CTkLabel(
-                self.grid_frame, text=dia_nombre, width=52, height=28,
-                font=ctk.CTkFont(size=10, weight="bold"),
-                fg_color=COLOR_SIDEBAR, text_color=COLOR_WHITE,
-                corner_radius=4
+                self.grid_frame, text=dia, width=50, height=26,
+                font=ctk.CTkFont(size=9, weight="bold"),
+                fg_color=COLOR_SIDEBAR, text_color=COLOR_WHITE, corner_radius=4
             )
             lbl.grid(row=0, column=j, padx=2, pady=2)
 
-    def cargar_mes(self, df_empleado: pd.DataFrame, mes: int, anio: int,
-                    nombre_empleado: str):
-        """Renderiza el calendario para el empleado y mes indicados."""
-        # Limpiar celdas anteriores (mantener headers)
-        for widget in self.grid_frame.winfo_children():
-            info = widget.grid_info()
-            if int(info.get("row", 0)) > 0:
-                widget.destroy()
+        # ── Leyenda ──────────────────────────────────────────────────────
+        ley = ctk.CTkFrame(self, fg_color="#F5F7FA", corner_radius=6)
+        ley.pack(fill="x", padx=12, pady=(4, 10))
 
-        self.lbl_titulo.configure(
-            text=f"{nombre_empleado}  |  "
-                 f"{self._nombre_mes(mes)} {anio}"
-        )
+        ctk.CTkLabel(ley, text="Leyenda:",
+                      font=ctk.CTkFont(size=8, weight="bold"),
+                      text_color="#595959").pack(side="left", padx=(8, 4), pady=5)
 
-        # Construir mapa {dia: info_estatus}
-        mapa_dia = {}
-        for _, row in df_empleado.iterrows():
+        for hex_c, label in self.LEYENDA:
+            cv = tk.Canvas(ley, width=11, height=11, bg=hex_c,
+                            highlightthickness=1, highlightbackground="#CCCCCC")
+            cv.pack(side="left", padx=(3, 1), pady=6)
+            ctk.CTkLabel(ley, text=label, font=ctk.CTkFont(size=8),
+                          text_color="#404040").pack(side="left", padx=(0, 7))
+
+    # ── API pública ───────────────────────────────────────────────────────
+    def cargar_mes(self, df_emp: pd.DataFrame, mes: int, anio: int,
+                    nombre: str, tipo: str = "", especialidad: str = "",
+                    foto_ruta: str = ""):
+        """Renderiza el calendario para un empleado y mes."""
+        # Limpiar celdas (preservar encabezado de días)
+        for w in self.grid_frame.winfo_children():
+            if int(w.grid_info().get("row", 0)) > 0:
+                w.destroy()
+
+        # Actualizar textos del perfil
+        self.lbl_nombre.configure(text=nombre)
+        partes = [p for p in [tipo, especialidad] if p]
+        self.lbl_perfil.configure(text="  ·  ".join(partes) if partes else "")
+        self.lbl_periodo.configure(text=f"{self._mes_nombre(mes)} {anio}")
+
+        # Foto del médico
+        self._cargar_foto(foto_ruta)
+
+        # Mapa día → info
+        mapa: dict[int, dict] = {}
+        for _, row in df_emp.iterrows():
             d = pd.to_datetime(row["Fecha"]).day
-            mapa_dia[d] = {
-                "label":   row.get("Label", ""),
-                "color":   f"#{row.get('Color_Hex', 'FFFFFF')}",
-                "notas":   row.get("Notas", ""),
-                "estatus": row.get("Estatus", ""),
+            mapa[d] = {
+                "color":  f"#{row.get('Color_Hex', 'FFFFFF')}",
+                "label":  row.get("Label", ""),
+                "notas":  row.get("Notas", ""),
+                "turno":  row.get("Turno_Tipo", ""),
             }
 
-        primer_dia_semana = calendar.monthrange(anio, mes)[0]  # 0=Lun
-        dias_del_mes = calendar.monthrange(anio, mes)[1]
+        primer_dia = calendar.monthrange(anio, mes)[0]
+        dias_mes   = calendar.monthrange(anio, mes)[1]
+        fila, col  = 1, primer_dia
 
-        fila = 1
-        col  = primer_dia_semana
-
-        for d in range(1, dias_del_mes + 1):
-            info = mapa_dia.get(d, {
-                "label": "",
-                "color": "#FFFFFF",
-                "notas": "",
-                "estatus": "SIN_DATOS",
-            })
-
-            texto_celda = str(d)
-            color_bg    = info["color"]
-            tooltip_txt = info["notas"] or info["label"]
+        for d in range(1, dias_mes + 1):
+            info    = mapa.get(d, {"color": "#FFFFFF", "label": "", "notas": "", "turno": ""})
+            tooltip = "\n".join(filter(None, [info["turno"], info["notas"] or info["label"]]))
 
             celda = ctk.CTkLabel(
-                self.grid_frame,
-                text=texto_celda,
-                width=52, height=42,
+                self.grid_frame, text=str(d), width=50, height=40,
                 font=ctk.CTkFont(size=10, weight="bold"),
-                fg_color=color_bg,
-                text_color="#1F1F1F",
-                corner_radius=6,
+                fg_color=info["color"], text_color="#1F1F1F", corner_radius=5,
             )
             celda.grid(row=fila, column=col, padx=2, pady=2)
-
-            # Tooltip al pasar el cursor
-            self._bind_tooltip(celda, tooltip_txt)
+            self._tooltip(celda, tooltip)
 
             col += 1
             if col > 6:
                 col = 0
                 fila += 1
 
-    @staticmethod
-    def _nombre_mes(mes: int) -> str:
-        nombres = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-                   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-        return nombres[mes] if 1 <= mes <= 12 else str(mes)
+    def _cargar_foto(self, foto_ruta: str):
+        """Muestra la foto del médico o el ícono placeholder."""
+        # Limpiar contenido previo del foto_frame
+        for w in self.foto_frame.winfo_children():
+            w.destroy()
+
+        ruta = Path(foto_ruta) if foto_ruta else None
+        if ruta and ruta.exists():
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.open(str(ruta))
+                img = img.resize((54, 54))
+                ctk_img = ctk.CTkImage(light_image=img, size=(54, 54))
+                lbl = ctk.CTkLabel(self.foto_frame, image=ctk_img, text="")
+                lbl.place(relx=0.5, rely=0.5, anchor="center")
+                lbl.image = ctk_img   # Mantener referencia
+                return
+            except Exception:
+                pass   # Fallback al ícono
+
+        # Ícono placeholder
+        lbl = ctk.CTkLabel(
+            self.foto_frame, text="👤",
+            font=ctk.CTkFont(size=26), text_color="#AAAAAA"
+        )
+        lbl.place(relx=0.5, rely=0.5, anchor="center")
 
     @staticmethod
-    def _bind_tooltip(widget, texto: str):
-        """Añade mini tooltip al widget."""
+    def _mes_nombre(mes: int) -> str:
+        ns = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+              "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        return ns[mes] if 1 <= mes <= 12 else str(mes)
+
+    @staticmethod
+    def _tooltip(widget, texto: str):
         if not texto:
             return
         tip = None
-
-        def mostrar(event):
+        def show(e):
             nonlocal tip
             tip = tk.Toplevel(widget)
             tip.overrideredirect(True)
-            tip.geometry(f"+{event.x_root + 14}+{event.y_root + 14}")
-            lbl = tk.Label(tip, text=texto, bg="#FFFFE0",
-                           font=("Calibri", 9), relief="solid", borderwidth=1,
-                           padx=6, pady=4)
-            lbl.pack()
-
-        def ocultar(event):
+            tip.geometry(f"+{e.x_root + 14}+{e.y_root + 14}")
+            tk.Label(tip, text=texto, bg="#FFFFE0",
+                     font=("Calibri", 9), relief="solid", bd=1,
+                     padx=6, pady=4).pack()
+        def hide(e):
             nonlocal tip
             if tip:
-                tip.destroy()
-                tip = None
-
-        widget.bind("<Enter>", mostrar)
-        widget.bind("<Leave>", ocultar)
+                tip.destroy(); tip = None
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
 
 
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
+# Widget: Panel de Analítica con Filtros
+# ══════════════════════════════════════════════
+class PanelAnalitica(ctk.CTkFrame):
+    """
+    Panel derecho con gráfica de pastel + filtros dinámicos:
+      - Filtro por Tipo (Internos / Residentes / Médico Adscrito / Todos)
+      - Filtro por Especialidad
+      - Vista individual: muestra solo el empleado seleccionado
+    """
+
+    def __init__(self, master, **kwargs):
+        super().__init__(master, fg_color=COLOR_BG, corner_radius=0, **kwargs)
+        self._df: Optional[pd.DataFrame] = None
+        self._nombre_actual: str = ""
+        self._construir()
+
+    def _construir(self):
+        # ── Encabezado + Filtros ─────────────────────────────────────────
+        hdr = ctk.CTkFrame(self, fg_color=COLOR_WHITE, corner_radius=8)
+        hdr.pack(fill="x", padx=0, pady=(0, 8))
+
+        ctk.CTkLabel(hdr, text="📊 Analítica de Asistencia",
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=COLOR_SIDEBAR).pack(anchor="w", padx=12, pady=(10, 2))
+
+        # Fila de filtros
+        frow = ctk.CTkFrame(hdr, fg_color=COLOR_WHITE)
+        frow.pack(fill="x", padx=12, pady=(4, 10))
+
+        ctk.CTkLabel(frow, text="Tipo:", font=ctk.CTkFont(size=10),
+                      text_color="#595959").pack(side="left", padx=(0, 4))
+        self.combo_tipo = ctk.CTkComboBox(
+            frow, values=["(Todos)"], width=130, height=28,
+            command=self._actualizar_grafica_filtros
+        )
+        self.combo_tipo.set("(Todos)")
+        self.combo_tipo.pack(side="left", padx=(0, 12))
+
+        ctk.CTkLabel(frow, text="Especialidad:", font=ctk.CTkFont(size=10),
+                      text_color="#595959").pack(side="left", padx=(0, 4))
+        self.combo_esp = ctk.CTkComboBox(
+            frow, values=["(Todas)"], width=140, height=28,
+            command=self._actualizar_grafica_filtros
+        )
+        self.combo_esp.set("(Todas)")
+        self.combo_esp.pack(side="left", padx=(0, 12))
+
+        # Toggle vista individual vs general
+        self.btn_individual = ctk.CTkButton(
+            frow, text="👤 Vista Individual", width=130, height=28,
+            fg_color=COLOR_ACCENT, hover_color="#1F5C8A", corner_radius=6,
+            command=self._toggle_vista_individual
+        )
+        self.btn_individual.pack(side="left")
+        self._modo_individual = False
+
+        # ── Área de la gráfica ───────────────────────────────────────────
+        self.frame_chart = ctk.CTkFrame(self, fg_color=COLOR_WHITE, corner_radius=8)
+        self.frame_chart.pack(fill="both", expand=True)
+        self._placeholder()
+
+    # ── API pública ───────────────────────────────────────────────────────
+    def set_datos(self, df: pd.DataFrame, tipos: list[str], especialidades: list[str]):
+        """Carga datos y actualiza los combos de filtros."""
+        self._df = df
+
+        self.combo_tipo.configure(values=["(Todos)"] + tipos)
+        self.combo_tipo.set("(Todos)")
+
+        self.combo_esp.configure(values=["(Todas)"] + especialidades)
+        self.combo_esp.set("(Todas)")
+
+        self._modo_individual = False
+        self.btn_individual.configure(
+            text="👤 Vista Individual", fg_color=COLOR_ACCENT
+        )
+        self._dibujar_grafica(df)
+
+    def set_empleado_actual(self, nombre: str):
+        """Informa al panel qué empleado está activo (para vista individual)."""
+        self._nombre_actual = nombre
+        if self._modo_individual:
+            self._dibujar_individual()
+
+    # ── Acciones internas ─────────────────────────────────────────────────
+    def _actualizar_grafica_filtros(self, _=None):
+        if self._df is None:
+            return
+        if self._modo_individual:
+            self._dibujar_individual()
+            return
+
+        df_f = self._df.copy()
+        sel_tipo = self.combo_tipo.get()
+        sel_esp  = self.combo_esp.get()
+
+        if sel_tipo != "(Todos)":
+            df_f = df_f[df_f["Tipo"].str.lower().str.contains(
+                sel_tipo.lower(), na=False)]
+        if sel_esp != "(Todas)":
+            df_f = df_f[df_f["Especialidad_Base"].str.lower().str.contains(
+                sel_esp.lower(), na=False)]
+
+        if df_f.empty:
+            self._placeholder("Sin datos para\nlos filtros seleccionados.")
+            return
+
+        self._dibujar_grafica(df_f)
+
+    def _toggle_vista_individual(self):
+        self._modo_individual = not self._modo_individual
+        if self._modo_individual:
+            self.btn_individual.configure(
+                text="🌐 Vista General", fg_color="#7030A0"
+            )
+            self._dibujar_individual()
+        else:
+            self.btn_individual.configure(
+                text="👤 Vista Individual", fg_color=COLOR_ACCENT
+            )
+            self._actualizar_grafica_filtros()
+
+    def _dibujar_individual(self):
+        if self._df is None or not self._nombre_actual:
+            self._placeholder("Seleccione un empleado\nen la lista superior.")
+            return
+        df_emp = self._df[self._df["Nombre_Completo"] == self._nombre_actual]
+        if df_emp.empty:
+            self._placeholder("Sin datos para este empleado.")
+            return
+        primera = df_emp.iloc[0]
+        subtitulo = " · ".join(filter(None, [
+            str(primera.get("Tipo", "")),
+            str(primera.get("Especialidad_Base", "")),
+        ]))
+        self._dibujar_grafica(df_emp, titulo_extra=f"{self._nombre_actual}\n{subtitulo}")
+
+    def _dibujar_grafica(self, df: pd.DataFrame, titulo_extra: str = ""):
+        """Renderiza la gráfica de pastel sobre el DataFrame dado."""
+        for w in self.frame_chart.winfo_children():
+            w.destroy()
+
+        # Calcular conteos
+        lab = df[df["Estatus"] != "NO_LABORABLE"]
+        conteos = lab["Estatus"].value_counts().to_dict()
+        if not conteos:
+            self._placeholder()
+            return
+
+        etiquetas, valores, colores = [], [], []
+        for est, cant in conteos.items():
+            info = COLOR_MAP.get(est, COLOR_MAP["SIN_DATOS"])
+            etiquetas.append(f"{info['label']}\n({cant})")
+            valores.append(cant)
+            colores.append(f"#{info['hex']}")
+
+        n_emp  = df["ID_Institucional"].nunique()
+        total  = sum(valores)
+        titulo = (titulo_extra or
+                  f"Distribución de Asistencia\n{n_emp} empleado{'s' if n_emp != 1 else ''}"
+                  f" · {total} días")
+
+        fig, ax = plt.subplots(figsize=(4.4, 4.0), dpi=80)
+        fig.patch.set_facecolor("#FFFFFF")
+        ax.set_facecolor("#FFFFFF")
+        wedges, texts, autotexts = ax.pie(
+            valores, labels=etiquetas, colors=colores,
+            autopct="%1.1f%%", startangle=140,
+            textprops={"fontsize": 7.5},
+            wedgeprops={"linewidth": 1.5, "edgecolor": "white"}
+        )
+        for t in autotexts:
+            t.set_fontsize(7); t.set_color("#2F2F2F")
+        ax.set_title(titulo, fontsize=9, color="#1F3864", fontweight="bold", pad=10)
+        plt.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.frame_chart)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
+        plt.close(fig)
+
+    def _placeholder(self, mensaje: str = "Cargue y procese los\narchivos para ver\nel análisis."):
+        for w in self.frame_chart.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(
+            self.frame_chart, text=f"📊\n\n{mensaje}",
+            font=ctk.CTkFont(size=11), text_color="#A0A0A0", justify="center"
+        ).pack(expand=True)
+
+
+# ══════════════════════════════════════════════
 # Ventana Principal
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════
 class SGAMApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-
-        # Estado de la aplicación
-        self._ruta_maestro:  Optional[str] = None
-        self._ruta_scanner:  Optional[str] = None
-        self._ruta_logo:     Optional[str] = None
-        self._datos:         Optional[dict] = None
-        self._df_resultado:  Optional[pd.DataFrame] = None
-        self._reglas:        Optional[dict] = None
+        self._ruta_maestro: Optional[str] = None
+        self._ruta_scanner: Optional[str] = None
+        self._ruta_logo:    Optional[str] = None
+        self._datos:        Optional[dict] = None
+        self._reglas:       Optional[dict] = None
+        self._df:           Optional[pd.DataFrame] = None
 
         self._configurar_ventana()
         self._construir_ui()
 
-    # ── Configuración de ventana ─────────────────────────────────────────
+    # ── Ventana ────────────────────────────────────────────────────────────
     def _configurar_ventana(self):
         self.title(f"{APP_TITLE}  {APP_VERSION}")
-        self.geometry(f"{WIN_WIDTH}x{WIN_HEIGHT}")
-        self.minsize(1100, 680)
+        self.geometry(f"{WIN_W}x{WIN_H}")
+        self.minsize(1150, 700)
         self.configure(fg_color=COLOR_BG)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-    # ── Construcción de UI ───────────────────────────────────────────────
     def _construir_ui(self):
-        self._construir_sidebar()
-        self._construir_panel_central()
-        self._construir_barra_estado()
+        self._sidebar()
+        self._panel_central()
+        self._barra_estado()
 
-    def _construir_sidebar(self):
-        """Panel lateral izquierdo con controles."""
-        self.sidebar = ctk.CTkFrame(
-            self, width=240, corner_radius=0,
-            fg_color=COLOR_SIDEBAR
+    # ── Sidebar ────────────────────────────────────────────────────────────
+    def _sidebar(self):
+        sb = ctk.CTkFrame(self, width=SIDEBAR_W, corner_radius=0, fg_color=COLOR_SIDEBAR)
+        sb.grid(row=0, column=0, sticky="nsew", rowspan=2)
+        sb.grid_propagate(False)
+        self._sb = sb
+
+        ctk.CTkLabel(sb, text="⚕ SGAM",
+                      font=ctk.CTkFont(size=22, weight="bold"),
+                      text_color=COLOR_WHITE).pack(pady=(22, 2))
+        ctk.CTkLabel(sb, text="Gestión de Asistencias\nMédicas",
+                      font=ctk.CTkFont(size=10), text_color="#A8C8E8").pack(pady=(0, 18))
+        self._sep()
+
+        # ── Archivos ────────────────────────────────────────────────────
+        self._sec("📂 ARCHIVOS DE ENTRADA")
+        self._btn("Cargar Plantilla Maestra", self._cargar_maestro, "📋")
+        self.lbl_maestro = self._lbl_est("Sin cargar")
+        self._btn("Cargar Reporte Escáner", self._cargar_scanner, "🖱")
+        self.lbl_scanner = self._lbl_est("Sin cargar")
+        self._btn("Logo Institucional (PNG)", self._cargar_logo, "🖼")
+        self.lbl_logo = self._lbl_est("Opcional")
+        self._sep()
+
+        # ── Procesamiento ───────────────────────────────────────────────
+        self._sec("⚙ PROCESAMIENTO")
+        self.btn_proc = self._btn("Procesar Asistencias", self._procesar, "▶",
+                                   color="#217346", hover="#1A5C37")
+        self._sep()
+
+        # ── Exportación ─────────────────────────────────────────────────
+        self._sec("📤 EXPORTACIÓN")
+        self.btn_exp1 = self._btn("Exportar Empleado Actual", self._exp_actual, "📄")
+        self.btn_exp2 = self._btn("Exportar Todos (individual)", self._exp_todos, "📦")
+        self.btn_exp3 = self._btn("Exportar con Filtros…", self._exp_filtrado, "🔽")
+        self.btn_exp4 = self._btn("Exportar Maestro (1 archivo)", self._exp_maestro,
+                                   "📊", color=COLOR_PURPLE, hover="#5C2480")
+
+        # Barra progreso
+        self.prog = ctk.CTkProgressBar(sb, width=206)
+        self.prog.pack(padx=20, pady=(10, 2))
+        self.prog.set(0)
+        self.lbl_prog = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=9),
+                                      text_color="#A8C8E8")
+        self.lbl_prog.pack()
+
+    def _sep(self):
+        ctk.CTkFrame(self._sb, height=1, fg_color="#3A5C8C").pack(
+            fill="x", padx=16, pady=8)
+
+    def _sec(self, texto):
+        ctk.CTkLabel(self._sb, text=texto, font=ctk.CTkFont(size=9, weight="bold"),
+                      text_color="#7EB3D8").pack(anchor="w", padx=18, pady=(6, 2))
+
+    def _btn(self, texto, cmd, ico="", color=COLOR_ACCENT, hover="#1F5C8A"):
+        b = ctk.CTkButton(
+            self._sb, text=f"{ico}  {texto}", command=cmd,
+            fg_color=color, hover_color=hover, text_color=COLOR_WHITE,
+            font=ctk.CTkFont(size=11), height=36, width=206, corner_radius=8,
         )
-        self.sidebar.grid(row=0, column=0, sticky="nsew", rowspan=2)
-        self.sidebar.grid_propagate(False)
+        b.pack(padx=20, pady=3)
+        return b
 
-        # Logo / Título
-        ctk.CTkLabel(
-            self.sidebar, text="⚕ SGAM",
-            font=ctk.CTkFont(family="Calibri", size=22, weight="bold"),
-            text_color=COLOR_WHITE
-        ).pack(pady=(24, 2))
-
-        ctk.CTkLabel(
-            self.sidebar, text="Gestión de Asistencias\nMédicas",
-            font=ctk.CTkFont(size=11),
-            text_color="#A8C8E8"
-        ).pack(pady=(0, 24))
-
-        # Separador
-        ctk.CTkFrame(self.sidebar, height=1, fg_color="#3A5C8C").pack(
-            fill="x", padx=16, pady=8
-        )
-
-        # ── Sección: Archivos ────────────────────────────────────────────
-        self._sidebar_seccion("📂 ARCHIVOS DE ENTRADA")
-
-        self.btn_maestro = self._sidebar_boton(
-            "Cargar Plantilla Maestra",
-            comando=self._cargar_maestro,
-            icono="📋"
-        )
-        self.lbl_maestro = self._sidebar_estado("Sin cargar")
-
-        self.btn_scanner = self._sidebar_boton(
-            "Cargar Reporte Escáner",
-            comando=self._cargar_scanner,
-            icono="🖱"
-        )
-        self.lbl_scanner = self._sidebar_estado("Sin cargar")
-
-        self.btn_logo = self._sidebar_boton(
-            "Logo Institucional (PNG)",
-            comando=self._cargar_logo,
-            icono="🖼"
-        )
-        self.lbl_logo = self._sidebar_estado("Opcional")
-
-        # Separador
-        ctk.CTkFrame(self.sidebar, height=1, fg_color="#3A5C8C").pack(
-            fill="x", padx=16, pady=12
-        )
-
-        # ── Sección: Procesamiento ───────────────────────────────────────
-        self._sidebar_seccion("⚙ PROCESAMIENTO")
-
-        self.btn_procesar = self._sidebar_boton(
-            "Procesar Asistencias",
-            comando=self._procesar,
-            icono="▶",
-            color_primario="#217346",
-            color_hover="#1A5C37",
-        )
-
-        # Separador
-        ctk.CTkFrame(self.sidebar, height=1, fg_color="#3A5C8C").pack(
-            fill="x", padx=16, pady=12
-        )
-
-        # ── Sección: Exportación ─────────────────────────────────────────
-        self._sidebar_seccion("📤 EXPORTACIÓN")
-
-        self.btn_exportar_uno = self._sidebar_boton(
-            "Exportar Empleado Actual",
-            comando=self._exportar_empleado_actual,
-            icono="📄"
-        )
-        self.btn_exportar_todos = self._sidebar_boton(
-            "Exportar Todos",
-            comando=self._exportar_todos,
-            icono="📦"
-        )
-
-        # Barra de progreso
-        self.progress_bar = ctk.CTkProgressBar(self.sidebar, width=200)
-        self.progress_bar.pack(padx=20, pady=(8, 2))
-        self.progress_bar.set(0)
-        self.lbl_progreso = ctk.CTkLabel(
-            self.sidebar, text="",
-            font=ctk.CTkFont(size=9), text_color="#A8C8E8"
-        )
-        self.lbl_progreso.pack()
-
-    def _sidebar_seccion(self, texto: str):
-        ctk.CTkLabel(
-            self.sidebar, text=texto,
-            font=ctk.CTkFont(size=9, weight="bold"),
-            text_color="#7EB3D8"
-        ).pack(anchor="w", padx=18, pady=(8, 2))
-
-    def _sidebar_boton(self, texto: str, comando, icono: str = "",
-                        color_primario: str = COLOR_ACCENT,
-                        color_hover: str = "#1F5C8A") -> ctk.CTkButton:
-        btn = ctk.CTkButton(
-            self.sidebar,
-            text=f"{icono}  {texto}",
-            command=comando,
-            fg_color=color_primario,
-            hover_color=color_hover,
-            text_color=COLOR_WHITE,
-            font=ctk.CTkFont(size=11),
-            height=36, width=200,
-            corner_radius=8,
-        )
-        btn.pack(padx=20, pady=4)
-        return btn
-
-    def _sidebar_estado(self, texto: str) -> ctk.CTkLabel:
-        lbl = ctk.CTkLabel(
-            self.sidebar, text=f"  {texto}",
-            font=ctk.CTkFont(size=9, slant="italic"),
-            text_color="#90B8D8",
-            anchor="w"
-        )
+    def _lbl_est(self, texto):
+        lbl = ctk.CTkLabel(self._sb, text=f"  {texto}",
+                            font=ctk.CTkFont(size=9, slant="italic"),
+                            text_color="#90B8D8", anchor="w")
         lbl.pack(padx=20, fill="x")
         return lbl
 
-    # ── Panel Central ────────────────────────────────────────────────────
-    def _construir_panel_central(self):
-        self.panel_central = ctk.CTkFrame(
-            self, corner_radius=0, fg_color=COLOR_BG
-        )
-        self.panel_central.grid(row=0, column=1, sticky="nsew", padx=0)
-        self.panel_central.grid_columnconfigure(0, weight=3)
-        self.panel_central.grid_columnconfigure(1, weight=2)
-        self.panel_central.grid_rowconfigure(1, weight=1)
+    # ── Panel central ──────────────────────────────────────────────────────
+    def _panel_central(self):
+        pc = ctk.CTkFrame(self, corner_radius=0, fg_color=COLOR_BG)
+        pc.grid(row=0, column=1, sticky="nsew")
+        pc.grid_columnconfigure(0, weight=3)
+        pc.grid_columnconfigure(1, weight=2)
+        pc.grid_rowconfigure(1, weight=1)
 
         # ── Barra de búsqueda ────────────────────────────────────────────
-        barra_busq = ctk.CTkFrame(
-            self.panel_central, height=56,
-            fg_color=COLOR_WHITE, corner_radius=0
+        bb = ctk.CTkFrame(pc, height=58, fg_color=COLOR_WHITE, corner_radius=0)
+        bb.grid(row=0, column=0, columnspan=2, sticky="ew")
+
+        ctk.CTkLabel(bb, text="🔍",
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=COLOR_TEXT).pack(side="left", padx=(14, 4), pady=14)
+
+        self.entry_bus = ctk.CTkEntry(
+            bb, placeholder_text="ID Biométrico o Nombre…",
+            width=300, height=34, font=ctk.CTkFont(size=11)
         )
-        barra_busq.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self.entry_bus.pack(side="left", padx=4)
+        self.entry_bus.bind("<Return>", lambda e: self._buscar())
 
-        ctk.CTkLabel(
-            barra_busq, text="🔍 Buscar empleado:",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=COLOR_TEXT
-        ).pack(side="left", padx=(16, 8), pady=14)
+        ctk.CTkButton(bb, text="Buscar", command=self._buscar,
+                       width=88, height=34, corner_radius=8,
+                       fg_color=COLOR_ACCENT).pack(side="left", padx=4)
 
-        self.entry_buscar = ctk.CTkEntry(
-            barra_busq, placeholder_text="ID Biométrico o Nombre...",
-            width=340, height=34,
-            font=ctk.CTkFont(size=11)
+        ctk.CTkLabel(bb, text="|", text_color="#CCCCCC").pack(side="left", padx=8)
+        ctk.CTkLabel(bb, text="Empleado:",
+                      font=ctk.CTkFont(size=11), text_color="#595959").pack(
+            side="left", padx=(0, 4))
+
+        self.combo_emp = ctk.CTkComboBox(
+            bb, values=["(sin datos)"], width=280, height=34,
+            command=self._cambiar_empleado
         )
-        self.entry_buscar.pack(side="left", padx=4, pady=10)
-        self.entry_buscar.bind("<Return>", lambda e: self._buscar())
-
-        ctk.CTkButton(
-            barra_busq, text="Buscar", command=self._buscar,
-            width=90, height=34, corner_radius=8,
-            fg_color=COLOR_ACCENT
-        ).pack(side="left", padx=6)
-
-        # ComboBox de empleados
-        ctk.CTkLabel(
-            barra_busq, text="   |   Empleado:",
-            font=ctk.CTkFont(size=11), text_color="#595959"
-        ).pack(side="left", padx=(12, 4))
-
-        self.combo_empleados = ctk.CTkComboBox(
-            barra_busq, values=["(sin datos)"],
-            width=260, height=34,
-            command=self._cambiar_empleado_combo
-        )
-        self.combo_empleados.pack(side="left", padx=4)
+        self.combo_emp.pack(side="left", padx=4)
 
         # ── Columna izquierda: Calendario ─────────────────────────────────
-        frame_cal = ctk.CTkFrame(
-            self.panel_central, fg_color=COLOR_BG, corner_radius=0
-        )
-        frame_cal.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=12)
+        fc = ctk.CTkFrame(pc, fg_color=COLOR_BG, corner_radius=0)
+        fc.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=10)
 
-        ctk.CTkLabel(
-            frame_cal, text="📅 Calendario de Asistencia",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=COLOR_SIDEBAR
-        ).pack(anchor="w", pady=(0, 8))
+        ctk.CTkLabel(fc, text="📅 Tablero Individual",
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=COLOR_SIDEBAR).pack(anchor="w", pady=(0, 6))
 
-        self.calendario = CalendarioWidget(frame_cal)
+        self.calendario = CalendarioWidget(fc)
         self.calendario.pack(fill="both", expand=True)
 
-        # ── Columna derecha: Gráfica + Stats ─────────────────────────────
-        frame_der = ctk.CTkFrame(
-            self.panel_central, fg_color=COLOR_BG, corner_radius=0
-        )
-        frame_der.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=12)
+        # ── Columna derecha: Analítica ─────────────────────────────────────
+        self.analitica = PanelAnalitica(pc)
+        self.analitica.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=10)
 
-        ctk.CTkLabel(
-            frame_der, text="📊 Resumen del Período",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=COLOR_SIDEBAR
-        ).pack(anchor="w", pady=(0, 8))
-
-        self.frame_grafica = ctk.CTkFrame(frame_der, fg_color=COLOR_WHITE, corner_radius=10)
-        self.frame_grafica.pack(fill="both", expand=True)
-
-        # Placeholder inicial
-        self._grafica_placeholder()
-
-    def _construir_barra_estado(self):
-        self.barra_estado = ctk.CTkFrame(
-            self, height=28, corner_radius=0,
-            fg_color="#D6E4F0"
-        )
-        self.barra_estado.grid(row=1, column=1, sticky="ew")
-
+    def _barra_estado(self):
+        ba = ctk.CTkFrame(self, height=26, corner_radius=0, fg_color="#D6E4F0")
+        ba.grid(row=1, column=1, sticky="ew")
         self.lbl_estado = ctk.CTkLabel(
-            self.barra_estado,
-            text="Listo. Cargue los archivos para comenzar.",
-            font=ctk.CTkFont(size=10),
-            text_color="#1F3864"
+            ba, text="Listo. Cargue los archivos para comenzar.",
+            font=ctk.CTkFont(size=10), text_color="#1F3864"
         )
-        self.lbl_estado.pack(side="left", padx=16)
+        self.lbl_estado.pack(side="left", padx=14)
 
-    # ── Acciones de los botones ──────────────────────────────────────────
-
+    # ── Acciones ───────────────────────────────────────────────────────────
     def _cargar_maestro(self):
         ruta = filedialog.askopenfilename(
             title="Seleccionar Plantilla Maestra",
-            filetypes=[("Excel files", "*.xlsx *.xls")]
+            filetypes=[("Excel", "*.xlsx *.xls")]
         )
         if not ruta:
             return
         try:
-            self._datos = cargar_archivo_maestro(ruta)
+            self._datos  = cargar_archivo_maestro(ruta)
             self._reglas = extraer_reglas(self._datos["reglas"])
             self._ruta_maestro = ruta
             nombre = Path(ruta).name
             self.lbl_maestro.configure(
-                text=f"  ✅ {nombre[:28]}...",
-                text_color="#70AD47"
-            )
-            self._set_estado(f"Plantilla maestra cargada: {nombre}", "ok")
+                text=f"  ✅ {nombre[:26]}…", text_color="#70AD47")
+            self._set_estado(f"Plantilla cargada: {nombre}", "ok")
+
+            # Mostrar alertas si las hay
+            alertas = self._datos.get("alertas", [])
+            if alertas:
+                messagebox.showwarning(
+                    "Advertencias de validación",
+                    "Se detectaron los siguientes avisos:\n\n" +
+                    "\n".join(f"• {a}" for a in alertas)
+                )
         except Exception as e:
             messagebox.showerror("Error al cargar plantilla", str(e))
             self._set_estado(f"Error: {e}", "error")
 
     def _cargar_scanner(self):
         ruta = filedialog.askopenfilename(
-            title="Seleccionar Reporte del Escáner Biométrico",
+            title="Reporte Escáner Biométrico",
             filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv")]
         )
         if not ruta:
@@ -473,28 +655,22 @@ class SGAMApp(ctk.CTk):
                 self._datos = {}
             self._datos["scanner"] = df
             self._ruta_scanner = ruta
-            nombre = Path(ruta).name
-            n_registros = len(df)
-            self.lbl_scanner.configure(
-                text=f"  ✅ {n_registros} registros",
-                text_color="#70AD47"
-            )
-            self._set_estado(f"Escáner cargado: {n_registros} registros", "ok")
+            n = len(df)
+            self.lbl_scanner.configure(text=f"  ✅ {n} registros", text_color="#70AD47")
+            self._set_estado(f"Escáner cargado: {n} registros", "ok")
         except Exception as e:
             messagebox.showerror("Error al cargar escáner", str(e))
             self._set_estado(f"Error: {e}", "error")
 
     def _cargar_logo(self):
         ruta = filedialog.askopenfilename(
-            title="Seleccionar Logo Institucional",
-            filetypes=[("PNG Image", "*.png")]
+            title="Logo Institucional",
+            filetypes=[("PNG", "*.png")]
         )
         if ruta:
             self._ruta_logo = ruta
             self.lbl_logo.configure(
-                text=f"  ✅ {Path(ruta).name[:28]}",
-                text_color="#70AD47"
-            )
+                text=f"  ✅ {Path(ruta).name[:26]}", text_color="#70AD47")
 
     def _procesar(self):
         if not self._datos:
@@ -504,215 +680,231 @@ class SGAMApp(ctk.CTk):
             messagebox.showwarning("Datos faltantes", "Cargue el Reporte del Escáner.")
             return
 
-        self._set_estado("⏳ Procesando asistencias...", "ok")
-        self.btn_procesar.configure(state="disabled")
+        self._set_estado("⏳ Procesando…", "ok")
+        self.btn_proc.configure(state="disabled")
 
-        def _tarea():
+        def _run():
             try:
                 df = procesar_asistencias(self._datos, self._reglas or {})
-                self._df_resultado = df
-                self.after(0, self._post_procesamiento)
+                self._df = df
+                self.after(0, self._post_proceso)
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error de procesamiento", str(e)))
+                self.after(0, lambda: messagebox.showerror("Error", str(e)))
                 self.after(0, lambda: self._set_estado(f"Error: {e}", "error"))
             finally:
-                self.after(0, lambda: self.btn_procesar.configure(state="normal"))
+                self.after(0, lambda: self.btn_proc.configure(state="normal"))
 
-        threading.Thread(target=_tarea, daemon=True).start()
+        threading.Thread(target=_run, daemon=True).start()
 
-    def _post_procesamiento(self):
-        """Se ejecuta en el hilo principal tras procesar."""
-        df = self._df_resultado
+    def _post_proceso(self):
+        df = self._df
         resumen = calcular_resumen(df)
-        n_emp = resumen["empleados"]
-
-        # Actualizar combo de empleados
         nombres = sorted(df["Nombre_Completo"].dropna().unique().tolist())
-        self.combo_empleados.configure(values=nombres)
+
+        self.combo_emp.configure(values=nombres)
         if nombres:
-            self.combo_empleados.set(nombres[0])
+            self.combo_emp.set(nombres[0])
             self._mostrar_empleado(nombres[0])
 
-        # Mostrar gráfica
-        self._mostrar_grafica(resumen)
-
+        self.analitica.set_datos(
+            df,
+            obtener_tipos_unicos(df),
+            obtener_especialidades_unicas(df),
+        )
         self._set_estado(
-            f"✅ Procesamiento completo — {n_emp} empleados | "
-            f"{resumen['total_dias_laborables']} días laborables evaluados",
-            "ok"
+            f"✅ Procesado — {resumen['empleados']} empleados | "
+            f"{resumen['total_dias_laborables']} días laborables", "ok"
         )
 
     def _buscar(self):
-        if self._df_resultado is None:
+        if self._df is None:
             return
-        termino = self.entry_buscar.get().strip()
+        termino = self.entry_bus.get().strip()
         if not termino:
             return
-        df_filtrado = filtrar_por_empleado(self._df_resultado, termino)
-        if df_filtrado.empty:
-            messagebox.showinfo("Sin resultados", f"No se encontraron registros para '{termino}'")
+        df_f = filtrar_por_empleado(self._df, termino)
+        if df_f.empty:
+            messagebox.showinfo("Sin resultados",
+                                f"No se encontraron registros para '{termino}'")
             return
-        nombre = df_filtrado.iloc[0]["Nombre_Completo"]
+        nombre = df_f.iloc[0]["Nombre_Completo"]
         self._mostrar_empleado(nombre)
-        self.combo_empleados.set(nombre)
+        self.combo_emp.set(nombre)
 
-    def _cambiar_empleado_combo(self, seleccion: str):
-        self._mostrar_empleado(seleccion)
+    def _cambiar_empleado(self, nombre: str):
+        self._mostrar_empleado(nombre)
 
     def _mostrar_empleado(self, nombre: str):
-        if self._df_resultado is None:
+        if self._df is None:
             return
-        df_emp = self._df_resultado[
-            self._df_resultado["Nombre_Completo"] == nombre
-        ].copy()
-
+        df_emp = self._df[self._df["Nombre_Completo"] == nombre].copy()
         if df_emp.empty:
             return
 
+        primera = df_emp.iloc[0]
+        tipo     = str(primera.get("Tipo", ""))
+        esp      = str(primera.get("Especialidad_Base", ""))
+        foto     = str(primera.get("Foto_Ruta", ""))
+
         fechas = pd.to_datetime(df_emp["Fecha"])
-        mes  = fechas.dt.month.mode()[0]
-        anio = fechas.dt.year.mode()[0]
+        mes  = int(fechas.dt.month.mode()[0])
+        anio = int(fechas.dt.year.mode()[0])
 
         df_mes = df_emp[
             (fechas.dt.month == mes) & (fechas.dt.year == anio)
         ]
-        self.calendario.cargar_mes(df_mes, mes, anio, nombre)
+        self.calendario.cargar_mes(df_mes, mes, anio, nombre,
+                                    tipo=tipo, especialidad=esp, foto_ruta=foto)
+        self.analitica.set_empleado_actual(nombre)
 
-    def _exportar_empleado_actual(self):
-        if self._df_resultado is None:
-            messagebox.showwarning("Sin datos", "Primero procese las asistencias.")
+    # ── Exportación ────────────────────────────────────────────────────────
+    def _exp_actual(self):
+        if self._df is None:
+            messagebox.showwarning("Sin datos", "Procese las asistencias primero.")
             return
-        nombre = self.combo_empleados.get()
+        nombre = self.combo_emp.get()
         if not nombre or nombre == "(sin datos)":
-            messagebox.showwarning("Sin empleado", "Seleccione un empleado del desplegable.")
+            messagebox.showwarning("Sin empleado", "Seleccione un empleado.")
             return
-
-        directorio = filedialog.askdirectory(title="Carpeta de destino para el reporte")
+        directorio = filedialog.askdirectory(title="Carpeta de destino")
         if not directorio:
             return
-
-        df_emp = self._df_resultado[
-            self._df_resultado["Nombre_Completo"] == nombre
-        ].copy()
-
+        df_emp = self._df[self._df["Nombre_Completo"] == nombre].copy()
         try:
             ruta = exportar_reporte_empleado(df_emp, directorio, self._ruta_logo)
-            messagebox.showinfo(
-                "Exportación exitosa",
-                f"Reporte generado:\n{ruta}"
-            )
+            messagebox.showinfo("Exportado", f"Reporte generado:\n{ruta}")
             self._set_estado(f"✅ Exportado: {Path(ruta).name}", "ok")
         except Exception as e:
-            messagebox.showerror("Error de exportación", str(e))
+            messagebox.showerror("Error", str(e))
 
-    def _exportar_todos(self):
-        if self._df_resultado is None:
-            messagebox.showwarning("Sin datos", "Primero procese las asistencias.")
+    def _exp_todos(self):
+        self._exportar_con_opciones(maestro=False, filtrado=False)
+
+    def _exp_filtrado(self):
+        self._exportar_con_opciones(maestro=False, filtrado=True)
+
+    def _exp_maestro(self):
+        self._exportar_con_opciones(maestro=True, filtrado=True)
+
+    def _exportar_con_opciones(self, maestro: bool, filtrado: bool):
+        if self._df is None:
+            messagebox.showwarning("Sin datos", "Procese las asistencias primero.")
             return
-        directorio = filedialog.askdirectory(title="Carpeta de destino para los reportes")
+
+        filtros = self._dialogo_filtros() if filtrado else {"tipo": None, "especialidad": None}
+        if filtros is None:
+            return
+
+        directorio = filedialog.askdirectory(title="Carpeta de destino")
         if not directorio:
             return
 
-        self.progress_bar.set(0)
-        self.btn_exportar_todos.configure(state="disabled")
+        self.prog.set(0)
 
-        def _callback(progreso: float, nombre: str):
-            self.after(0, lambda: self.progress_bar.set(progreso))
-            self.after(0, lambda: self.lbl_progreso.configure(text=nombre[:32]))
+        def _cb(progreso, nombre):
+            self.after(0, lambda: self.prog.set(progreso))
+            self.after(0, lambda: self.lbl_prog.configure(text=nombre[:32]))
 
-        def _tarea():
+        def _run():
             try:
-                archivos = exportar_todos(
-                    self._df_resultado, directorio,
-                    self._ruta_logo, callback=_callback
-                )
-                self.after(0, lambda: messagebox.showinfo(
-                    "Exportación completa",
-                    f"Se generaron {len(archivos)} archivos en:\n{directorio}"
-                ))
-                self.after(0, lambda: self._set_estado(
-                    f"✅ {len(archivos)} reportes exportados", "ok"
-                ))
+                if maestro:
+                    ruta = exportar_maestro_consolidado(
+                        self._df, directorio,
+                        ruta_logo=self._ruta_logo,
+                        filtro_tipo=filtros["tipo"],
+                        filtro_especialidad=filtros["especialidad"],
+                        callback=_cb
+                    )
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Maestro generado", f"Archivo:\n{ruta}"))
+                    self.after(0, lambda: self._set_estado(
+                        f"✅ Maestro: {Path(ruta).name}", "ok"))
+                else:
+                    archivos = exportar_filtrado(
+                        self._df, directorio,
+                        filtro_tipo=filtros["tipo"],
+                        filtro_especialidad=filtros["especialidad"],
+                        ruta_logo=self._ruta_logo,
+                        callback=_cb
+                    )
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Exportación completa",
+                        f"Se generaron {len(archivos)} archivos en:\n{directorio}"))
+                    self.after(0, lambda: self._set_estado(
+                        f"✅ {len(archivos)} archivos exportados", "ok"))
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Error", str(e)))
             finally:
-                self.after(0, lambda: self.btn_exportar_todos.configure(state="normal"))
-                self.after(0, lambda: self.progress_bar.set(0))
-                self.after(0, lambda: self.lbl_progreso.configure(text=""))
+                self.after(0, lambda: self.prog.set(0))
+                self.after(0, lambda: self.lbl_prog.configure(text=""))
 
-        threading.Thread(target=_tarea, daemon=True).start()
+        threading.Thread(target=_run, daemon=True).start()
 
-    # ── Gráfica de pastel ─────────────────────────────────────────────────
-    def _grafica_placeholder(self):
-        """Muestra un mensaje en lugar de gráfica cuando no hay datos."""
-        for w in self.frame_grafica.winfo_children():
-            w.destroy()
-        ctk.CTkLabel(
-            self.frame_grafica,
-            text="📊\n\nCargue y procese los\narchivos para ver\nel resumen estadístico.",
-            font=ctk.CTkFont(size=12),
-            text_color="#A0A0A0",
-            justify="center"
-        ).pack(expand=True)
+    def _dialogo_filtros(self) -> Optional[dict]:
+        """Diálogo modal para seleccionar filtros de exportación."""
+        if self._df is None:
+            return None
 
-    def _mostrar_grafica(self, resumen: dict):
-        """Renderiza la gráfica de pastel de resumen."""
-        for w in self.frame_grafica.winfo_children():
-            w.destroy()
+        tipos  = ["(Todos)"] + obtener_tipos_unicos(self._df)
+        esps   = ["(Todas)"] + obtener_especialidades_unicas(self._df)
+        result = {}
+        cancel = [False]
 
-        conteos = resumen.get("conteos", {})
-        if not conteos:
-            self._grafica_placeholder()
-            return
+        win = ctk.CTkToplevel(self)
+        win.title("Filtros de exportación")
+        win.geometry("420x310")
+        win.resizable(False, False)
+        win.grab_set()
+        win.configure(fg_color=COLOR_BG)
 
-        etiquetas = []
-        valores   = []
-        colores   = []
+        ctk.CTkLabel(win, text="Filtros de Exportación",
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=COLOR_SIDEBAR).pack(pady=(18, 6))
+        ctk.CTkLabel(win,
+                      text="Deje en '(Todos/Todas)' para exportar sin restricción.",
+                      font=ctk.CTkFont(size=10), text_color="#595959").pack(pady=(0, 14))
 
-        for estatus, cantidad in conteos.items():
-            info = COLOR_MAP.get(estatus, COLOR_MAP["SIN_DATOS"])
-            hex_color = f"#{info['hex']}"
-            etiquetas.append(f"{info['label']}\n({cantidad})")
-            valores.append(cantidad)
-            colores.append(hex_color)
+        for lbl_txt, valores, key in [
+            ("Tipo de Personal:", tipos, "tipo"),
+            ("Especialidad:",     esps,  "especialidad"),
+        ]:
+            fr = ctk.CTkFrame(win, fg_color=COLOR_WHITE, corner_radius=8)
+            fr.pack(fill="x", padx=24, pady=4)
+            ctk.CTkLabel(fr, text=lbl_txt,
+                          font=ctk.CTkFont(size=10, weight="bold"),
+                          text_color=COLOR_SIDEBAR).pack(anchor="w", padx=12, pady=(8, 2))
+            cb = ctk.CTkComboBox(fr, values=valores, width=366, height=32)
+            cb.set(valores[0])
+            cb.pack(padx=12, pady=(0, 10))
+            result[key] = cb   # Guardamos referencia al combo
 
-        fig, ax = plt.subplots(figsize=(4.2, 3.8), dpi=80)
-        fig.patch.set_facecolor("#FFFFFF")
-        ax.set_facecolor("#FFFFFF")
+        fr_btns = ctk.CTkFrame(win, fg_color=COLOR_BG)
+        fr_btns.pack(fill="x", padx=24, pady=14)
 
-        wedges, texts, autotexts = ax.pie(
-            valores, labels=etiquetas, colors=colores,
-            autopct="%1.1f%%", startangle=140,
-            textprops={"fontsize": 7.5},
-            wedgeprops={"linewidth": 1.5, "edgecolor": "white"}
-        )
-        for t in autotexts:
-            t.set_fontsize(7)
-            t.set_color("#2F2F2F")
+        def ok():
+            for key, cb in result.items():
+                sel = cb.get()
+                result[key] = None if sel.startswith("(") else sel
+            win.destroy()
 
-        ax.set_title(
-            f"Distribución de Asistencia\n"
-            f"{resumen.get('empleados', 0)} empleados · {resumen['total_dias_laborables']} días",
-            fontsize=9, color="#1F3864", fontweight="bold"
-        )
-        plt.tight_layout()
+        def no():
+            cancel[0] = True
+            win.destroy()
 
-        canvas = FigureCanvasTkAgg(fig, master=self.frame_grafica)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
-        plt.close(fig)
+        ctk.CTkButton(fr_btns, text="✅  Continuar", command=ok,
+                       fg_color=COLOR_OK, hover_color="#1A5C37",
+                       height=36, corner_radius=8).pack(side="left", expand=True, padx=(0, 6))
+        ctk.CTkButton(fr_btns, text="Cancelar", command=no,
+                       fg_color="#888888", hover_color="#666666",
+                       height=36, corner_radius=8).pack(side="left", expand=True)
 
-    # ── Estado ────────────────────────────────────────────────────────────
-    def _set_estado(self, mensaje: str, tipo: str = "ok"):
-        colores = {
-            "ok":    "#1F3864",
-            "error": COLOR_ERROR,
-            "warn":  COLOR_WARN,
-        }
-        self.lbl_estado.configure(
-            text=mensaje,
-            text_color=colores.get(tipo, "#1F3864")
-        )
+        win.wait_window()
+        return None if cancel[0] else result
+
+    # ── Barra de estado ────────────────────────────────────────────────────
+    def _set_estado(self, msg: str, tipo: str = "ok"):
+        colores = {"ok": "#1F3864", "error": COLOR_ERR, "warn": COLOR_WARN}
+        self.lbl_estado.configure(text=msg, text_color=colores.get(tipo, "#1F3864"))
 
 
 # ──────────────────────────────────────────────
