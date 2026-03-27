@@ -21,109 +21,118 @@ def generar_maestro(ruta_salida: str = "data/Estructura_Maestra_Hospital2.xlsx")
             "Regla de Negocio": [
                 "Tolerancia Retardo",
                 "Tolerancia Salida Anticipada",
-                "Jornada Estándar",
-                "Guardia 24h",
+                "Horario Guardia A",
+                "Horario Guardia B",
+                "Horario Guardia C",
             ],
             "Descripción": [
                 "Minutos permitidos de retraso antes de marcar retardo: 10 minutos",
                 "Minutos antes del fin de turno que se permite salir: 10 minutos",
-                "Jornada regular de 8:00 a 15:00 horas",
-                "Guardia especial de 08:00 a 08:00 del día siguiente",
+                "Turno A Matutino: 08:00 - 15:00",
+                "Turno B Vespertino: 15:00 - 21:00",
+                "Turno C Nocturno: 21:00 - 08:00",
             ],
         })
         df_reglas.to_excel(writer, sheet_name="1_Reglas_ID", index=False)
 
-        # ── Hoja 2: Catálogo Personal ────────────────────────────────
+        # ── Hoja 2: Catálogo Personal (campos nuevos: Periodo_Ingreso, Foto_Ruta) ──
         personal = []
-        nombres = [
-            "Dra. Laura Mendoza Torres",    "Dr. Carlos Ríos Alvarado",
-            "Dra. Sofía Hernández Paz",     "Dr. Javier Morales Cruz",
-            "Dr. Andrés López Gutiérrez",   "Dra. Patricia Vega Sánchez",
-            "Dr. Fernando Castillo Ruiz",   "Dra. Isabel Martínez Flores",
+        datos = [
+            # (nombre, tipo, especialidad, grado, periodo)
+            ("Dra. Laura Mendoza Torres",   "Médico Adscrito", "Urgencias",        "Especialista", "A"),
+            ("Dr. Carlos Ríos Alvarado",    "Residente",       "Pediatría",        "R2",           "A"),
+            ("Dra. Sofía Hernández Paz",    "Residente",       "Ginecología",      "R1",           "B"),
+            ("Dr. Javier Morales Cruz",     "Médico Adscrito", "Medicina Interna", "Especialista", "A"),
+            ("Dr. Andrés López Gutiérrez",  "Interno",         "",                 "Intern.",      "B"),
+            ("Dra. Patricia Vega Sánchez",  "Médico Adscrito", "Cardiología",      "Especialista", "A"),
+            ("Dr. Fernando Castillo Ruiz",  "Residente",       "Traumatología",    "R3",           "B"),
+            ("Dra. Isabel Martínez Flores", "Interno",         "",                 "Intern.",      "A"),
         ]
-        tipos = ["Médico Adscrito", "Residente", "Residente", "Médico Adscrito",
-                 "Interno",         "Médico Adscrito", "Residente", "Interno"]
-        especialidades = [
-            "Urgencias", "Pediatría", "Ginecología", "Medicina Interna",
-            "Cirugía General", "Cardiología", "Traumatología", "Urgencias"
-        ]
-
-        for i, (nombre, tipo, esp) in enumerate(zip(nombres, tipos, especialidades), start=1001):
+        for i, (nombre, tipo, esp, grado, periodo) in enumerate(datos, start=1001):
             personal.append({
                 "ID_Biometrico_SIRA": str(i),
                 "Nombre_Completo":    nombre,
                 "Tipo":               tipo,
-                "Especialidad_Base":  esp,
-                "Grado":              "Especialista" if tipo == "Médico Adscrito" else "R2" if tipo == "Residente" else "Intern.",
+                "Especialidad_Base":  esp,          # Vacío para Internos
+                "Grado":              grado,
                 "Universidad":        random.choice(["UNAM", "IPN", "UAM", "UV"]),
                 "Estatus":            "Activo",
                 "Vigencia":           "2025-12-31",
+                "Periodo_Ingreso":    periodo,      # NUEVO: A = Primavera, B = Otoño
+                "Foto_Ruta":          "",           # NUEVO: ruta a imagen (vacío en ejemplo)
             })
 
-        df_catalogo = pd.DataFrame(personal)
-        df_catalogo.to_excel(writer, sheet_name="2_Catalogo_Personal", index=False)
+        pd.DataFrame(personal).to_excel(writer, sheet_name="2_Catalogo_Personal", index=False)
 
-        # ── Hoja 3: Incidencias ──────────────────────────────────────
+        # ── Hoja 3: Incidencias (con Notas_Motivo y rotación con destino) ──
         incidencias = [
             {
-                "ID_Institucional": "1001",
-                "Tipo_Incidencia":  "Vacaciones",
-                "Fecha_Inicio":     date(2025, 1, 13),
-                "Fecha_Fin":        date(2025, 1, 17),
-                "Destino_o_Servicio": "Descanso anual",
-                "Notas_Motivo":     "Período vacacional aprobado",
+                "ID_Institucional":  "1001",
+                "Tipo_Incidencia":   "Vacaciones",
+                "Fecha_Inicio":      date(2025, 1, 13),
+                "Fecha_Fin":         date(2025, 1, 17),
+                "Destino_o_Servicio": "",
+                "Notas_Motivo":      "Período vacacional aprobado por jefatura.",
             },
             {
-                "ID_Institucional": "1003",
-                "Tipo_Incidencia":  "Incapacidad",
-                "Fecha_Inicio":     date(2025, 1, 8),
-                "Fecha_Fin":        date(2025, 1, 10),
-                "Destino_o_Servicio": "Médico tratante",
-                "Notas_Motivo":     "Incapacidad por enfermedad general",
+                "ID_Institucional":  "1003",
+                "Tipo_Incidencia":   "Incapacidad",
+                "Fecha_Inicio":      date(2025, 1, 8),
+                "Fecha_Fin":         date(2025, 1, 10),
+                "Destino_o_Servicio": "Médico tratante externo",
+                "Notas_Motivo":      "Incapacidad por síndrome gripal. Certificado IMSS adjunto.",
             },
             {
-                "ID_Institucional": "1005",
-                "Tipo_Incidencia":  "Comisión",
-                "Fecha_Inicio":     date(2025, 1, 20),
-                "Fecha_Fin":        date(2025, 1, 21),
-                "Destino_o_Servicio": "Congreso Nacional de Cirugía",
-                "Notas_Motivo":     "Representación institucional",
+                "ID_Institucional":  "1005",
+                "Tipo_Incidencia":   "Rotación",           # NUEVO tipo — requiere destino
+                "Fecha_Inicio":      date(2025, 1, 20),
+                "Fecha_Fin":         date(2025, 1, 24),
+                "Destino_o_Servicio": "Hospital Regional Sur – Servicio de Cirugía",
+                "Notas_Motivo":      "Rotación programada en convenio institucional.",
+            },
+            {
+                "ID_Institucional":  "1002",
+                "Tipo_Incidencia":   "Permiso",
+                "Fecha_Inicio":      date(2025, 1, 6),
+                "Fecha_Fin":         date(2025, 1, 6),
+                "Destino_o_Servicio": "",
+                "Notas_Motivo":      "Permiso por asuntos personales. Aprobado verbalmente.",
             },
         ]
-        df_incidencias = pd.DataFrame(incidencias)
-        df_incidencias.to_excel(writer, sheet_name="3_Registro_Incidencias", index=False)
+        pd.DataFrame(incidencias).to_excel(
+            writer, sheet_name="3_Registro_Incidencias", index=False)
 
-        # ── Hoja 4: Rol de Guardias ──────────────────────────────────
+        # ── Hoja 4: Rol de Guardias (tipos A, B, C) ──────────────────
         guardias = []
         ids_personal = [str(i) for i in range(1001, 1009)]
         servicios = ["Urgencias", "Hospitalización", "Consulta Externa", "UCI"]
 
-        # Enero 2025 — días laborables (lun-vie, más algunos fines de semana)
         for dia in range(1, 32):
             try:
                 fecha = date(2025, 1, dia)
             except ValueError:
                 break
-
-            # Todos tienen turno entre semana; guardia rotativa fines de semana
             for id_emp in ids_personal:
-                if fecha.weekday() < 5:   # Lunes a Viernes
+                if fecha.weekday() < 5:
+                    # Turno A (matutino) entre semana para todos
                     guardias.append({
                         "Fecha_Guardia":    fecha,
                         "ID_Institucional": id_emp,
                         "Servicio_Cubierto": random.choice(servicios),
-                        "TIPO": "Turno Normal",
+                        "TIPO": "A",
                     })
-                elif random.random() < 0.3:   # 30% probabilidad guardia fin de semana
-                    guardias.append({
-                        "Fecha_Guardia":    fecha,
-                        "ID_Institucional": id_emp,
-                        "Servicio_Cubierto": random.choice(servicios),
-                        "TIPO": "Guardia 24h",
-                    })
+                else:
+                    # Fines de semana: rotación B y C
+                    if random.random() < 0.3:
+                        tipo_g = random.choice(["B", "C"])
+                        guardias.append({
+                            "Fecha_Guardia":    fecha,
+                            "ID_Institucional": id_emp,
+                            "Servicio_Cubierto": random.choice(servicios),
+                            "TIPO": tipo_g,
+                        })
 
-        df_guardias = pd.DataFrame(guardias)
-        df_guardias.to_excel(writer, sheet_name="4_Rol_Guardias", index=False)
+        pd.DataFrame(guardias).to_excel(writer, sheet_name="4_Rol_Guardias", index=False)
 
     print(f"✅ Archivo maestro generado: {ruta_salida}")
     return ruta_salida
