@@ -18,8 +18,11 @@ def _verificar_dependencias():
         "pandas":        "pandas",
         "openpyxl":      "openpyxl",
         "matplotlib":    "matplotlib",
+<<<<<<< HEAD
         "xlrd":          "xlrd",
         "PIL":           "Pillow",
+=======
+>>>>>>> 03375ddba2ba6a96a07720bbcce50d06ab7f6768
     }
     faltantes = []
     for nombre_import, nombre_pip in dependencias.items():
