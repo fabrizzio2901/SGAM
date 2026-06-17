@@ -1,5 +1,5 @@
 """
-SGAM - core.py  v2.1 (Auditado)
+SGAM - core.py  v2.4 (Corrección de Límites Absolutos de Tolerancia)
 Motor de cruce: algoritmo semáforo hermético basado en única fuente de verdad.
 """
 
@@ -23,6 +23,7 @@ COLOR_MAP = {
     "PERMISO":       {"hex": "9DC3E6", "label": "Permiso",      "emoji": "🔵"},
     "COMISION":      {"hex": "F4B942", "label": "Comisión",     "emoji": "🟤"},
     "ROTACION":      {"hex": "FFB6C1", "label": "Rotación",     "emoji": "🔄"},
+    "FESTIVO":       {"hex": "ADD8E6", "label": "Festivo",      "emoji": "🎉"}, 
     "OTRO":          {"hex": "E2EFDA", "label": "Otro",         "emoji": "⚫"},
     "SIN_DATOS":     {"hex": "FFFFFF", "label": "Sin datos",    "emoji": "◻️"},
 }
@@ -77,7 +78,7 @@ def _expandir_incidencias(df_inc: pd.DataFrame) -> dict[tuple, dict]:
 
         for i in range(max(delta, 1)):
             dia = f_ini + timedelta(days=i)
-            # [CORRECCIÓN] En caso de incidencia superpuesta, conservamos y concatenamos notas
+            # Conservamos y concatenamos notas en caso de incidencias superpuestas
             if (id_emp, dia) in mapa:
                 existente = mapa[(id_emp, dia)]
                 mapa[(id_emp, dia)] = {
@@ -134,32 +135,54 @@ def _evaluar_turno(marcas: list[dict], hora_esperada: time, tol_retardo: int, to
     reales      = [m for m in marcas if not m.get("continuacion")]
     cont        = [m for m in marcas if m.get("continuacion")]
 
+    # Caso especial: continuación de turno nocturno
     if not reales and cont:
         co = cont[0].get("checkout")
         return "ASISTENCIA", f"Continuación turno nocturno | CheckOut: {co}"
 
+    # Extraer todos los checkins de los registros reales
     checkins = [m["checkin"] for m in reales if m.get("checkin") is not None]
     if not checkins:
         notas = " | ".join(f"CheckOut:{m['checkout']}" for m in reales if m.get("checkout"))
         return "ASISTENCIA", notas or "Sin CheckIn registrado"
 
+    # Obtener el registro principal (el más temprano)
     checkin_ppal = min(checkins, key=lambda t: _min_desde_medianoche(t))
-    diff = (_min_desde_medianoche(checkin_ppal) or 0) - (_min_desde_medianoche(hora_esperada) or 0)
+    
+    # ── VALIDACIÓN ESTRICTA DE LA HORA LÍMITE ──
+    # Convertimos los tiempos a un conteo absoluto de minutos para el parseo seguro
+    min_registro = _min_desde_medianoche(checkin_ppal) or 0
+    min_esperado = _min_desde_medianoche(hora_esperada) or 0
+    
+    # Definimos los límites dinámicamente sumando a la hora base (ej. 07:00)
+    # Límite 1: Hasta +15 mins inclusive (ej. 07:15 exactos)
+    # Límite 2: Hasta +30 mins inclusive (ej. 07:30 exactos)
+    limite_asistencia = min_esperado + 15
+    limite_retardo    = min_esperado + 30
 
-    if diff <= tol_retardo:
+    # Lógica condicional de tiempos solicitada:
+    if min_registro <= limite_asistencia:
+        # Cualquier registro hasta las 07:15 inclusive
         estatus = "ASISTENCIA"
-    elif diff <= tol_falta:
+    elif min_registro <= limite_retardo:
+        # Cualquier registro desde las 07:16 hasta las 07:30 inclusive
         estatus = "RETARDO"
     else:
+        # Cualquier registro a partir de las 07:31 en adelante
         estatus = "FALTA"
 
+    # ── CONSTRUCCIÓN DE NOTAS DEL REPORTE ──
+    diff = min_registro - min_esperado
     notas_partes = []
     for i, m in enumerate(reales, 1):
         pfx = f"T{i}" if len(reales) > 1 else ""
         if m.get("checkin"):  notas_partes.append(f"{pfx}CheckIn:{m['checkin']}")
         if m.get("checkout"): notas_partes.append(f"{pfx}CheckOut:{m['checkout']}")
         if m.get("nocturno"): notas_partes.append("(nocturno)")
-    if diff > 0: notas_partes.append(f"+{diff}min")
+    
+    # Registrar cuántos minutos tarde llegó si hubo demora
+    if diff > 0: 
+        notas_partes.append(f"+{diff}min")
 
     return estatus, " | ".join(notas_partes)
 
@@ -171,18 +194,17 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
     df_rol       = datos.get("rol_guardias", pd.DataFrame())
     df_inc       = datos["incidencias"]
     df_scanner   = datos["scanner"]
+    dic_festivos = datos.get("festivos", {})
 
     tol_retardo = reglas.get("tolerancia_retardo_min", 10)
     tol_falta   = reglas.get("tolerancia_falta_min",   15)
     horarios    = reglas.get("horarios_guardia", {})
     hora_default = time(7, 0)
 
-    # ── [CORRECCIÓN CRÍTICA] Barrera estricta Anti-Huérfanos ─────────
     ids_catalogo = set(catalogo[catalogo["_activo"]]["ID"].astype(str).str.strip().unique())
     id_map: dict[str, str] = {id_: id_ for id_ in ids_catalogo}
     df_scanner = df_scanner[df_scanner["ID_Biometrico"].astype(str).str.strip().isin(ids_catalogo)].copy()
 
-    # ── [CORRECCIÓN CRÍTICA] Límites Mensuales Robustos (Moda) ────────
     s_fechas = pd.to_datetime(df_scanner["Fecha"], errors="coerce").dropna()
     if s_fechas.empty:
         raise ValueError("El reporte del escáner no tiene fechas válidas aplicables al catálogo actual.")
@@ -195,7 +217,6 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
     fecha_fin_mes = date(mes_objetivo.year, mes_objetivo.month, ultimo_dia)
     dias_mes = [fecha_inicio_mes + timedelta(days=i) for i in range((fecha_fin_mes - fecha_inicio_mes).days + 1)]
 
-    # ── Pre-calcular estructuras ──────────────────────────────────────
     mapa_incidencias  = _expandir_incidencias(df_inc)
     calendario_guard  = construir_calendario_guardias(df_rol, dias_mes)
     indice_scanner    = _construir_indice_scanner(df_scanner, id_map)
@@ -219,12 +240,13 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
         rot_row = df_rol[df_rol["ID"].astype(str).str.strip() == id_emp]
         rot_inicial = str(rot_row.iloc[0]["Rotación"]).strip().upper() if not rot_row.empty else "A"
 
-        guardia_anterior = None # Validacion de saltos
+        guardia_anterior = None 
 
         for dia in dias_mes:
             notas          = ""
             guardia_tipo   = ""
             turno_servicio = ""
+            es_festivo     = dia in dic_festivos
 
             if (id_emp, dia) in mapa_incidencias:
                 inc_info    = mapa_incidencias[(id_emp, dia)]
@@ -233,7 +255,10 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
                 if inc_info["destino"]: partes.append(f"Destino: {inc_info['destino']}")
                 if inc_info["nota"]:    partes.append(inc_info["nota"])
                 notas = " | ".join(partes)
-                guardia_tipo = calcular_guardia_del_dia(rot_inicial, dia.day) # Mantener tracking matemático
+                guardia_tipo = calcular_guardia_del_dia(rot_inicial, dia.day) 
+                
+                if es_festivo:
+                    notas = f"Día Festivo ({dic_festivos[dia]}) | {notas}"
 
             else:
                 if (id_emp, dia) in calendario_guard:
@@ -247,10 +272,21 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
 
                 hora_esp = horarios.get(guardia_tipo, {}).get("hora_inicio", hora_default)
                 marcas   = indice_scanner.get((id_emp, dia), [])
-                estatus_dia, notas = _evaluar_turno(marcas, hora_esp, tol_retardo, tol_falta)
+                
+                if es_festivo:
+                    if marcas:
+                        # Vino a trabajar en día festivo
+                        estatus_dia, eval_notas = _evaluar_turno(marcas, hora_esp, tol_retardo, tol_falta)
+                        notas = f"Asistencia en Festivo ({dic_festivos[dia]}) | {eval_notas}"
+                    else:
+                        # Descanso Festivo
+                        estatus_dia = "FESTIVO"
+                        notas = dic_festivos[dia]
+                else:
+                    # Día normal de trabajo
+                    estatus_dia, notas = _evaluar_turno(marcas, hora_esp, tol_retardo, tol_falta)
 
-            # [VALIDACIÓN] Doble guardia al cruzar meses o modificar plantillas mid-ciclo
-            if guardia_anterior and guardia_anterior == guardia_tipo and estatus_dia not in ["VACACIONES", "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION"]:
+            if guardia_anterior and guardia_anterior == guardia_tipo and estatus_dia not in ["VACACIONES", "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION", "FESTIVO"]:
                 notas = f"ALERTA SECUENCIA: Doble guardia ({guardia_tipo}) detectada | " + notas
             guardia_anterior = guardia_tipo
 

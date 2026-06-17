@@ -3,11 +3,12 @@ SGAM - Sistema de Gestión de Asistencias Médicas
 Módulo: export.py
 Responsabilidad: Generación de reportes Excel institucionales con openpyxl.
 
-Mejoras v1.2:
+Mejoras v1.3:
   - Reporte consolidado en HOJA ÚNICA compacta: una fila por médico,
     columnas de días coloreadas (optimizado para impresión).
   - Exportación individual por empleado (sin cambios de estructura).
   - Filtros por Tipo y Especialidad aplicables a ambos modos.
+  - Soporte de renderizado para Días Festivos.
 """
 
 import calendar
@@ -99,16 +100,8 @@ def _insertar_logo(ws, ruta_logo: Optional[str], celda: str = "A1"):
 
 
 def _nombre_archivo(nombre: str, mes: int, anio: int, sufijo: str = "") -> str:
-    """
-    Genera el nombre estandarizado del archivo.
-    Aplica sanitización estricta: elimina todos los caracteres no válidos en
-    nombres de archivo de Windows ( \\ / : * ? \" < > | y espacios ).
-    """
-    # Reemplazar espacios por _ primero
     limpio = nombre.replace(" ", "_")
-    # Eliminar cualquier caracter inválido en Windows
     limpio = re.sub(r'[\\/:*?"<>|]', "", limpio)
-    # Colapsar guiones bajos múltiples
     limpio = re.sub(r"_+", "_", limpio).strip("_")
     mes_str = MESES_ES.get(mes, str(mes))
     return f"SGAM_Reporte_{limpio}{sufijo}_{mes_str}{anio}.xlsx"
@@ -116,7 +109,6 @@ def _nombre_archivo(nombre: str, mes: int, anio: int, sufijo: str = "") -> str:
 
 def _aplicar_filtros(df: pd.DataFrame, filtro_tipo: Optional[str],
                       filtro_especialidad: Optional[str]) -> pd.DataFrame:
-    """Aplica filtros opcionales por Tipo y Especialidad."""
     df_f = df.copy()
     if filtro_tipo and filtro_tipo.strip():
         df_f = df_f[df_f["Tipo"].str.lower().str.contains(
@@ -138,7 +130,6 @@ def _aplicar_filtros(df: pd.DataFrame, filtro_tipo: Optional[str],
 # ──────────────────────────────────────────────
 def _encabezado_individual(ws, empleado: dict, mes: int, anio: int,
                              ruta_logo: Optional[str]):
-    """Bloque de encabezado institucional para reporte individual."""
     ws.row_dimensions[1].height = 50
     ws.merge_cells("A1:C1")
     _insertar_logo(ws, ruta_logo, "A1")
@@ -180,10 +171,8 @@ def _encabezado_individual(ws, empleado: dict, mes: int, anio: int,
 
 def _calendario_individual(ws, df_emp: pd.DataFrame,
                               mes: int, anio: int, fila_ini: int = 11) -> int:
-    """Calendario mensual coloreado en una hoja individual."""
     dias_mes = calendar.monthrange(anio, mes)[1]
 
-    # Título del calendario
     ws.row_dimensions[fila_ini].height = 20
     ws.merge_cells(
         start_row=fila_ini, start_column=1,
@@ -193,7 +182,6 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
                  value=f"CALENDARIO – {MESES_ES.get(mes, mes).upper()} {anio}")
     c.font = FONT_H_WHITE; c.fill = FILL_NAVY; c.alignment = ALIN_C
 
-    # Fila de números de día
     fila_d = fila_ini + 1
     ws.row_dimensions[fila_d].height = 18
     _cell(ws, fila_d, 1, "Día →", fill=FILL_BLUE, font=FONT_H_WHITE)
@@ -207,7 +195,6 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
         c_ds.font = _font(size=7, color="404040")
         c_ds.alignment = ALIN_C; c_ds.border = BORDER
 
-    # Fila de estatus coloreado
     fila_st = fila_d + 2
     ws.row_dimensions[fila_st].height = 22
     _cell(ws, fila_st, 1, "Estatus", fill=FILL_BLUE, font=FONT_H_WHITE)
@@ -233,7 +220,6 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
             cm.width = 150; cm.height = 60
             c.comment = cm
 
-    # Leyenda
     fila_ley = fila_st + 2
     ws.merge_cells(
         start_row=fila_ley, start_column=1,
@@ -241,7 +227,7 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
     )
     c_ley = ws.cell(row=fila_ley, column=1,
                      value="LEYENDA: 🟡 Asistencia  🔴 Retardo  🟠 Falta  "
-                           "⚪ No Laborable  🟢 Vacaciones  🔵 Incapacidad")
+                           "⚪ No Laborable  🟢 Vacaciones  🔵 Incapacidad  🎉 Festivo")
     c_ley.font = _font(size=8, italic=True, color="404040")
     c_ley.alignment = ALIN_L
     return fila_ley + 2
@@ -272,11 +258,6 @@ def _seccion_firma(ws, fila_ini: int, dias_mes: int):
 def exportar_reporte_empleado(df_empleado: pd.DataFrame,
                                directorio_salida: str,
                                ruta_logo: Optional[str] = None) -> str:
-    """
-    Genera reporte Excel individual de un empleado.
-    Crea UNA HOJA POR MES presente en los datos, evitando pérdida de días
-    por el filtrado con moda del mes.
-    """
     if df_empleado.empty:
         raise ValueError("DataFrame vacío.")
 
@@ -285,21 +266,19 @@ def exportar_reporte_empleado(df_empleado: pd.DataFrame,
         "Nombre_Completo":   str(primera.get("Nombre_Completo", "Desconocido")),
         "ID_Institucional":  str(primera.get("ID", "")),
         "Tipo":              str(primera.get("Tipo", "")),
-        "Especialidad": str(primera.get("Especialidad", "")),
+        "Especialidad":      str(primera.get("Especialidad", "")),
         "Subespecialidad":   str(primera.get("Subespecialidad", "")),
         "Alta_Especialidad": str(primera.get("Alta_Especialidad", "")),
         "Grado":             str(primera.get("Grado", "")),
         "Periodo_Ingreso":   str(primera.get("Periodo_Ingreso", "")),
     }
 
-    # Agrupar por (año, mes) — una hoja por período
     fechas_dt = pd.to_datetime(df_empleado["Fecha"])
     periodos  = sorted(
         {(int(f.year), int(f.month)) for f in fechas_dt},
         key=lambda t: (t[0], t[1])
     )
 
-    # Nombre de archivo basado en el primer período presente
     anio0, mes0 = periodos[0]
     sufijo = "" if len(periodos) == 1 else "_multiperiodo"
     nombre_arch = _nombre_archivo(empleado["Nombre_Completo"], mes0, anio0, sufijo=sufijo)
@@ -339,7 +318,6 @@ def exportar_todos(df_resultado: pd.DataFrame,
                     directorio_salida: str,
                     ruta_logo: Optional[str] = None,
                     callback: Optional[Callable] = None) -> list[str]:
-    """Exporta un archivo individual por cada empleado."""
     ids    = df_resultado["ID"].unique()
     total  = len(ids)
     rutas  = []
@@ -364,7 +342,6 @@ def exportar_filtrado(df_resultado: pd.DataFrame,
                        filtro_especialidad: Optional[str] = None,
                        ruta_logo: Optional[str] = None,
                        callback: Optional[Callable] = None) -> list[str]:
-    """Exporta archivos individuales con filtros opcionales."""
     df_f = _aplicar_filtros(df_resultado, filtro_tipo, filtro_especialidad)
     return exportar_todos(df_f, directorio_salida, ruta_logo, callback)
 
@@ -378,14 +355,7 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
                                   filtro_tipo: Optional[str] = None,
                                   filtro_especialidad: Optional[str] = None,
                                   callback: Optional[Callable] = None) -> str:
-    """
-    Genera un único archivo Excel con HOJA ÚNICA compacta.
-
-    Diseño: una fila por médico + columnas de días (1–31) coloreadas.
-    Columnas fijas: # | Nombre | Tipo | Especialidad | Grado | Periodo | d1 … d31
-    Optimizado para impresión: altura de fila mínima, fuente pequeña,
-    sin celdas combinadas en el área de datos.
-    """
+    
     df_f = _aplicar_filtros(df_resultado, filtro_tipo, filtro_especialidad)
 
     fechas   = pd.to_datetime(df_f["Fecha"])
@@ -394,12 +364,9 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
     dias_mes = calendar.monthrange(anio, mes)[1]
     mes_str  = MESES_ES.get(mes, str(mes))
 
-    # Nombre de archivo
     sfx = ""
-    if filtro_tipo:
-        sfx += f"_{filtro_tipo.replace(' ', '_')}"
-    if filtro_especialidad:
-        sfx += f"_{filtro_especialidad.replace(' ', '_')}"
+    if filtro_tipo: sfx += f"_{filtro_tipo.replace(' ', '_')}"
+    if filtro_especialidad: sfx += f"_{filtro_especialidad.replace(' ', '_')}"
     nombre_arch = f"SGAM_Maestro{sfx}_{mes_str}{anio}.xlsx"
 
     Path(directorio_salida).mkdir(parents=True, exist_ok=True)
@@ -409,13 +376,11 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
     ws = wb.active
     ws.title = f"Asistencias {mes_str} {anio}"
 
-    # ── Fila 1: Logo + Título ────────────────────────────────────────────
     ws.row_dimensions[1].height = 46
     ws.merge_cells("A1:B1")
     _insertar_logo(ws, ruta_logo, "A1")
 
-    # Calcular última columna del reporte (columnas fijas + días)
-    N_COLS_FIJAS = 6   # #, Nombre, Tipo, Especialidad, Grado, Periodo
+    N_COLS_FIJAS = 6   
     ULTIMA_COL   = N_COLS_FIJAS + dias_mes
     ultimo_letra = get_column_letter(ULTIMA_COL)
 
@@ -429,19 +394,15 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
     c_tit.fill      = FILL_XLIGHT
     c_tit.alignment = ALIN_L
 
-    # ── Fila 2: Sub-encabezado hospital ─────────────────────────────────
     ws.row_dimensions[2].height = 16
     ws.merge_cells(f"A2:{ultimo_letra}2")
-    c_h = ws.cell(row=2, column=1,
-                   value="HOSPITAL GENERAL – Departamento de Recursos Humanos")
+    c_h = ws.cell(row=2, column=1, value="HOSPITAL GENERAL – Departamento de Recursos Humanos")
     c_h.font = _font(bold=True, size=10, color="1F3864")
     c_h.fill = FILL_LBLUE; c_h.alignment = ALIN_C
 
-    # ── Fila 3: Encabezado de columnas ──────────────────────────────────
     FILA_HEADER = 3
     ws.row_dimensions[FILA_HEADER].height = 22
 
-    # Columnas fijas
     cols_fijas = ["#", "Nombre Completo", "Tipo", "Especialidad", "Grado", "Periodo"]
     anchos_fijos = [4, 28, 13, 16, 6, 8]
 
@@ -451,20 +412,16 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         c.alignment = ALIN_CW; c.border = BORDER
         ws.column_dimensions[get_column_letter(j)].width = ancho
 
-    # Columnas de días
     for d in range(1, dias_mes + 1):
         col = N_COLS_FIJAS + d
         fecha_d = date(anio, mes, d)
-        # Encabezado: número + día semana en 2 líneas
-        c = ws.cell(row=FILA_HEADER, column=col,
-                     value=f"{d}\n{DIAS_ES[fecha_d.weekday()]}")
+        c = ws.cell(row=FILA_HEADER, column=col, value=f"{d}\n{DIAS_ES[fecha_d.weekday()]}")
         c.font      = _font(bold=True, size=8, color="FFFFFF")
         c.fill      = FILL_BLUE
         c.alignment = ALIN_CW
         c.border    = BORDER
         ws.column_dimensions[get_column_letter(col)].width = 3.8
 
-    # ── Filas de empleados ───────────────────────────────────────────────
     ids    = df_f["ID"].unique()
     total  = len(ids)
 
@@ -481,7 +438,6 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         grado  = str(primera.get("Grado", ""))
         period = str(primera.get("Periodo_Ingreso", ""))
 
-        # Alternar fondo de fila para facilitar lectura
         fill_fila = _fill("F2F7FC") if num_idx % 2 == 0 else FILL_WHITE
 
         vals_fijos = [num_idx, nombre, tipo_e, esp_e, grado, period]
@@ -492,7 +448,6 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
             c.alignment = ALIN_L if j == 2 else ALIN_C
             c.border    = BORDER
 
-        # Construir mapa {dia: info} para el empleado
         mapa_dia: dict[int, dict] = {}
         df_mes_emp = df_emp[
             (pd.to_datetime(df_emp["Fecha"]).dt.month == mes) &
@@ -506,7 +461,6 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
                 "notas": row.get("Notas", ""),
             }
 
-        # Celdas de días coloreadas
         for d in range(1, dias_mes + 1):
             col  = N_COLS_FIJAS + d
             info = mapa_dia.get(d, {"color": "FFFFFF", "label": "", "notas": ""})
@@ -524,13 +478,14 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         if callback:
             callback(progreso=num_idx / total, nombre=nombre)
 
-    # ── Leyenda con color real (celdas coloreadas, no emojis) ──────────────
+    # [MEJORA] Integración del elemento 'Festivo' a la leyenda
     LEYENDA_ITEMS = [
         ("As", "Asistencia",   "FFD966"),
         ("Re", "Retardo",      "FF4B4B"),
         ("Fa", "Falta",        "FF8C00"),
         ("NL", "No Laborable", "D9D9D9"),
         ("Va", "Vacaciones",   "70AD47"),
+        ("Fe", "Festivo",      "ADD8E6"),
         ("In", "Incapacidad",  "9DC3E6"),
         ("Pe", "Permiso",      "FFE699"),
         ("Co", "Comisión",     "BDD7EE"),
@@ -540,14 +495,12 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
     fila_ley = FILA_HEADER + total + 2
     ws.row_dimensions[fila_ley].height = 16
 
-    # "LEYENDA:" en col 1
     c_title = ws.cell(row=fila_ley, column=1, value="LEYENDA:")
     c_title.font = _font(bold=True, size=8, color="1F3864")
     c_title.alignment = ALIN_C
 
     col_ley = 2
     for abrev, etiqueta, hex_color in LEYENDA_ITEMS:
-        # Celda de color (cuadrito)
         c_color = ws.cell(row=fila_ley, column=col_ley, value=abrev)
         c_color.fill      = _fill(hex_color)
         c_color.font      = _font(bold=True, size=7, color="1F1F1F")
@@ -556,7 +509,6 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         ws.column_dimensions[get_column_letter(col_ley)].width = 3.5
         col_ley += 1
 
-        # Celda de texto de la etiqueta
         c_lbl = ws.cell(row=fila_ley, column=col_ley, value=etiqueta)
         c_lbl.font      = _font(size=8, color="404040")
         c_lbl.alignment = ALIN_L
@@ -564,17 +516,13 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         ws.column_dimensions[get_column_letter(col_ley)].width = 9
         col_ley += 1
 
-    # ── Configuración de página para impresión ───────────────────────────
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToPage   = True
     ws.page_setup.fitToWidth  = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_view.zoomScale   = 80
-
-    # Congelar columnas fijas al desplazar horizontalmente
     ws.freeze_panes = f"G{FILA_HEADER + 1}"
 
-    # ── Hoja 2: Resumen General ───────────────────────────────────────────
     ws_res = wb.create_sheet(title="Resumen General")
     _construir_hoja_resumen_general(ws_res, df_f, mes_str, anio)
 
@@ -584,11 +532,6 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
 
 def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
                                      mes_str: str, anio: int) -> None:
-    """
-    Construye la hoja 'Resumen General' del maestro consolidado.
-    Contiene una tabla con conteos y porcentajes por estatus.
-    """
-    # Encabezado
     ws.row_dimensions[1].height = 26
     ws.merge_cells("A1:F1")
     c = ws.cell(row=1, column=1,
@@ -597,7 +540,6 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
     c.fill      = _fill("EBF3FB")
     c.alignment = ALIN_L
 
-    # Conteos totales de días laborables (excluye NO_LABORABLE)
     lab = df[df["Estatus"] != "NO_LABORABLE"]
     total_dias = len(lab)
     n_emp      = df["ID"].nunique()
@@ -607,7 +549,6 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
              value=f"Total empleados: {n_emp}   |   Total días laborables evaluados: {total_dias}")
     ws.cell(row=2, column=1).font = _font(size=9, italic=True, color="595959")
 
-    # Encabezado de tabla
     FILA_H = 4
     headers = ["Estatus", "Días", "% del Total", "Color"]
     anchos  = [18, 10, 14, 14]
@@ -619,11 +560,11 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
         c.border    = BORDER
         ws.column_dimensions[get_column_letter(j)].width = w
 
-    # Filas de datos por estatus
     from core import COLOR_MAP
     conteos = lab["Estatus"].value_counts().to_dict()
-    # Orden fijo para legibilidad
-    orden = ["ASISTENCIA", "RETARDO", "FALTA", "VACACIONES",
+    
+    # [MEJORA] Se incluye el estatus FESTIVO en el orden de agregación
+    orden = ["ASISTENCIA", "RETARDO", "FALTA", "VACACIONES", "FESTIVO",
              "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION", "OTRO"]
 
     for idx, est in enumerate(orden):
@@ -641,18 +582,15 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
             c.font      = _font(size=9)
             c.alignment = ALIN_C
             c.border    = BORDER
-            # Alternar fondo
             if idx % 2 == 0:
                 c.fill = _fill("F2F7FC")
 
-        # Columna D: celda pintada con el color real del estatus
         c_col = ws.cell(row=fila, column=4, value=info["label"])
         c_col.fill      = _fill(info["hex"])
         c_col.font      = _font(size=8, bold=True, color="1F1F1F")
         c_col.alignment = ALIN_C
         c_col.border    = BORDER
 
-    # Fila de total
     fila_tot = FILA_H + len(conteos) + 2
     ws.row_dimensions[fila_tot].height = 15
     ws.merge_cells(f"A{fila_tot}:B{fila_tot}")

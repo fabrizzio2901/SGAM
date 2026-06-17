@@ -1,6 +1,6 @@
 """
-SGAM - ingestion.py  v3.4 (Blindado contra FutureWarnings)
-Plantilla única + escáner dual + Parser Optimizado.
+SGAM - ingestion.py  v3.5 (Blindado contra FutureWarnings + Soporte de Festivos)
+Plantilla única + escáner dual + Parser Optimizado + Ampliación Personal.
 """
 
 import re
@@ -132,6 +132,11 @@ def _parse_hora_segura(val) -> Optional[time]:
         pass
     return None
 
+def _limpiar_na(val):
+    """Helper para normalizar vacíos en texto hacia 'N/A' visual."""
+    s = str(val).strip() if pd.notna(val) else ""
+    return s if s and s.lower() not in ("nan", "nat", "none", "no aplica", "n/a", "") else "N/A"
+
 # ──────────────────────────────────────────────
 # Carga de Plantilla ÚNICA Institucional
 # ──────────────────────────────────────────────
@@ -157,8 +162,11 @@ def cargar_plantilla(ruta: str) -> dict:
 
     _validar_columnas(df_cat, ["ID", "Nombre completo", "Estatus", "Tipo de personal"], "1_Catalogo_Personal")
 
-    for col in ["Universidad", "Especialidad", "Subespecialidad", "Alta Especialidad", "Periodo ingreso"]:
-        if col not in df_cat.columns: df_cat[col] = ""
+    # [MEJORA] Aseguramos estrictamente las columnas nuevas
+    nuevas_columnas = ["Universidad", "Especialidad", "Sub especialidad", "Alta especialidad", "Periodo de ingreso"]
+    for col in nuevas_columnas:
+        if col not in df_cat.columns: 
+            df_cat[col] = "N/A"
 
     foto_col = next((c for c in df_cat.columns if "foto" in c.lower()), None)
     df_cat["Foto_Ruta"] = df_cat[foto_col].apply(lambda x: str(x) if pd.notna(x) else "") if foto_col else ""
@@ -172,16 +180,18 @@ def cargar_plantilla(ruta: str) -> dict:
         alertas.append(f"Catálogo: IDs duplicados encontrados y purgados: {dupes_cat[:5]}")
         df_cat.drop_duplicates(subset=["ID"], keep="first", inplace=True)
 
-    df_cat["Tipo de personal"] = df_cat["Tipo de personal"].apply(lambda x: str(x) if pd.notna(x) else "").apply(_normalizar_tipo)
-    df_cat["Nombre completo"]  = df_cat["Nombre completo"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
-    df_cat["Universidad"]      = df_cat["Universidad"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
-    df_cat["Especialidad"]     = (
-        df_cat["Especialidad"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
-        .apply(lambda v: "" if v.lower() in ("no aplica", "no aplica.", "n/a", "na") else v)
-    )
-    df_cat["Subespecialidad"]  = df_cat["Subespecialidad"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
-    df_cat["Alta Especialidad"]= df_cat["Alta Especialidad"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
-    df_cat["Periodo ingreso"]  = df_cat["Periodo ingreso"].apply(lambda x: str(x) if pd.notna(x) else "").apply(_normalizar_periodo)
+    df_cat["Tipo de personal"]   = df_cat["Tipo de personal"].apply(lambda x: str(x) if pd.notna(x) else "").apply(_normalizar_tipo)
+    df_cat["Nombre completo"]    = df_cat["Nombre completo"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
+    
+    # [MEJORA] Limpiamos y aseguramos "N/A" visual
+    df_cat["Universidad"]        = df_cat["Universidad"].apply(_limpiar_na)
+    df_cat["Especialidad"]       = df_cat["Especialidad"].apply(_limpiar_na)
+    df_cat["Sub especialidad"]   = df_cat["Sub especialidad"].apply(_limpiar_na)
+    df_cat["Alta especialidad"]  = df_cat["Alta especialidad"].apply(_limpiar_na)
+    
+    # El periodo de ingreso tiene una normalización especial, si no pasa, es N/A
+    df_cat["Periodo de ingreso"] = df_cat["Periodo de ingreso"].apply(lambda x: str(x) if pd.notna(x) else "").apply(_normalizar_periodo)
+    df_cat["Periodo de ingreso"] = df_cat["Periodo de ingreso"].replace("", "N/A")
 
     df_cat["_activo"] = False
     df_cat["Grado"]   = ""
@@ -266,10 +276,29 @@ def cargar_plantilla(ruta: str) -> dict:
 
     df_inc = pd.concat(dfs_inc, ignore_index=True) if dfs_inc else pd.DataFrame(columns=["ID", "Ausencia Justificada", "Fecha Inicio", "Fecha Termino", "Notas_Motivo", "Destino"])
 
+    # ── 6. Días Festivos [NUEVA MEJORA] ────────────────────────────────
+    dic_festivos = {}
+    if "6_Dias_Festivos" in xls.sheet_names:
+        try:
+            # Esperamos estrictamente las columnas A (Motivo) y B (Fecha)
+            df_festivos = pd.read_excel(xls, sheet_name="6_Dias_Festivos", usecols="A:B")
+            df_festivos.columns = ['Motivo', 'Fecha']
+            df_festivos = df_festivos.dropna(subset=['Fecha'])
+            # Conversión segura a formato Date para cruce exacto en core.py
+            df_festivos['Fecha'] = pd.to_datetime(df_festivos['Fecha'], errors='coerce').dt.date
+            df_festivos = df_festivos.dropna(subset=['Fecha'])
+            dic_festivos = df_festivos.set_index('Fecha')['Motivo'].to_dict()
+        except Exception as e:
+            alertas.append(f"Días Festivos: Hubo un problema procesando la pestaña - {e}")
+    else:
+        alertas.append("No se detectó la pestaña '6_Dias_Festivos'. Se omitirán descansos festivos automáticos.")
+
+
     return {
         "catalogo":     df_cat,
         "rol_guardias": df_rol,
         "incidencias":  df_inc,
+        "festivos":     dic_festivos, # Exponemos el diccionario hacia el exterior
         "alertas":      alertas,
     }
 
