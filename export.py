@@ -3,12 +3,10 @@ SGAM - Sistema de Gestión de Asistencias Médicas
 Módulo: export.py
 Responsabilidad: Generación de reportes Excel institucionales con openpyxl.
 
-Mejoras v1.3:
-  - Reporte consolidado en HOJA ÚNICA compacta: una fila por médico,
-    columnas de días coloreadas (optimizado para impresión).
-  - Exportación individual por empleado (sin cambios de estructura).
-  - Filtros por Tipo y Especialidad aplicables a ambos modos.
-  - Soporte de renderizado para Días Festivos.
+Mejoras v2.0:
+  - Integración de nuevos estados de Guardia (Guardia, Post-Guardia, Falta Guardia).
+  - Diccionario de abreviaturas inteligente para evitar duplicados en el reporte maestro (ej. Fa vs FG).
+  - Sincronización estricta de códigos Hexadecimales y Emojis con el Motor Core v3.0.
 """
 
 import calendar
@@ -69,6 +67,23 @@ MESES_ES = {
     9: "Sept.",   10: "Octubre", 11: "Noviembre", 12: "Diciembre",
 }
 DIAS_ES = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
+
+# Mapeo inteligente para el calendario maestro
+ABREV_MAP = {
+    "Guardia":       "Gu",
+    "Post-Guardia":  "PG",
+    "Falta Guardia": "FG",
+    "Asistencia":    "As",
+    "Retardo":       "Re",
+    "Falta":         "Fa",
+    "No Laborable":  "NL",
+    "Vacaciones":    "Va",
+    "Festivo":       "Fe",
+    "Incapacidad":   "In",
+    "Permiso":       "Pe",
+    "Comisión":      "Co",
+    "Rotación":      "Ro"
+}
 
 
 # ──────────────────────────────────────────────
@@ -202,16 +217,20 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
     mapa_dia = {}
     for _, row in df_emp.iterrows():
         d = pd.to_datetime(row["Fecha"]).day
+        label_full = row.get("Label", "")
+        # Usar mapeo o máximo 3 letras como respaldo
+        abrev = ABREV_MAP.get(label_full, (label_full or "")[:3])
+        
         mapa_dia[d] = {
-            "label": row.get("Label", ""),
+            "label_abrev": abrev,
             "color": row.get("Color_Hex", "FFFFFF"),
             "notas": row.get("Notas", ""),
         }
 
     for d in range(1, dias_mes + 1):
         col  = d + 1
-        info = mapa_dia.get(d, {"label": "", "color": "FFFFFF", "notas": ""})
-        c = ws.cell(row=fila_st, column=col, value=(info["label"] or "")[:3])
+        info = mapa_dia.get(d, {"label_abrev": "", "color": "FFFFFF", "notas": ""})
+        c = ws.cell(row=fila_st, column=col, value=info["label_abrev"])
         c.fill = _fill(info["color"]); c.font = FONT_SMALL
         c.alignment = ALIN_C; c.border = BORDER
         if info["notas"]:
@@ -225,9 +244,11 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
         start_row=fila_ley, start_column=1,
         end_row=fila_ley,   end_column=dias_mes + 1
     )
-    c_ley = ws.cell(row=fila_ley, column=1,
-                     value="LEYENDA: 🟡 Asistencia  🔴 Retardo  🟠 Falta  "
-                           "⚪ No Laborable  🟢 Vacaciones  🔵 Incapacidad  🎉 Festivo")
+    
+    # Leyenda actualizada con Guardias y Emojis core
+    leyenda_txt = ("LEYENDA: 🟡 Asis  🟠 Ret  🔴 Falta  🏥 Gua  🛌 Post-Gua  ❌ Falta Gua  "
+                   "⚪ No Lab  🟢 Vac  💛 Incap  🔵 Perm  🎉 Festivo")
+    c_ley = ws.cell(row=fila_ley, column=1, value=leyenda_txt)
     c_ley.font = _font(size=8, italic=True, color="404040")
     c_ley.alignment = ALIN_L
     return fila_ley + 2
@@ -455,9 +476,12 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         ]
         for _, row in df_mes_emp.iterrows():
             d_num = pd.to_datetime(row["Fecha"]).day
+            label_full = row.get("Label", "")
+            abrev = ABREV_MAP.get(label_full, (label_full or "")[:2])
+            
             mapa_dia[d_num] = {
                 "color": row.get("Color_Hex", "FFFFFF"),
-                "label": (row.get("Label", "") or "")[:2],
+                "label": abrev,
                 "notas": row.get("Notas", ""),
             }
 
@@ -478,18 +502,21 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         if callback:
             callback(progreso=num_idx / total, nombre=nombre)
 
-    # [MEJORA] Integración del elemento 'Festivo' a la leyenda
+    # Diccionario de Leyenda con los colores sincronizados estrictamente con core.py
     LEYENDA_ITEMS = [
-        ("As", "Asistencia",   "FFD966"),
-        ("Re", "Retardo",      "FF4B4B"),
-        ("Fa", "Falta",        "FF8C00"),
-        ("NL", "No Laborable", "D9D9D9"),
-        ("Va", "Vacaciones",   "70AD47"),
-        ("Fe", "Festivo",      "ADD8E6"),
-        ("In", "Incapacidad",  "9DC3E6"),
-        ("Pe", "Permiso",      "FFE699"),
-        ("Co", "Comisión",     "BDD7EE"),
-        ("Ro", "Rotación",     "F4B942"),
+        ("As", "Asistencia",    "FFD966"),
+        ("Re", "Retardo",       "FF8C00"),
+        ("Fa", "Falta",         "FF4B4B"),
+        ("Gu", "Guardia",       "8EA9DB"),
+        ("PG", "Post-Guardia",  "D9E1F2"),
+        ("FG", "Falta Guardia", "C00000"),
+        ("NL", "No Laborable",  "D9D9D9"),
+        ("Va", "Vacaciones",    "70AD47"),
+        ("Fe", "Festivo",       "ADD8E6"),
+        ("In", "Incapacidad",   "FFE699"),
+        ("Pe", "Permiso",       "9DC3E6"),
+        ("Co", "Comisión",      "F4B942"),
+        ("Ro", "Rotación",      "FFB6C1"),
     ]
 
     fila_ley = FILA_HEADER + total + 2
@@ -563,9 +590,11 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
     from core import COLOR_MAP
     conteos = lab["Estatus"].value_counts().to_dict()
     
-    # [MEJORA] Se incluye el estatus FESTIVO en el orden de agregación
-    orden = ["ASISTENCIA", "RETARDO", "FALTA", "VACACIONES", "FESTIVO",
-             "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION", "OTRO"]
+    # Orden de estatus actualizado para incluir métricas de las Guardias
+    orden = ["ASISTENCIA", "RETARDO", "FALTA", 
+             "GUARDIA", "POST_GUARDIA", "FALTA_GUARDIA",
+             "VACACIONES", "FESTIVO", "INCAPACIDAD", 
+             "PERMISO", "COMISION", "ROTACION", "OTRO"]
 
     for idx, est in enumerate(orden):
         if est not in conteos:

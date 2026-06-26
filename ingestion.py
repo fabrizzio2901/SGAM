@@ -162,10 +162,29 @@ def cargar_plantilla(ruta: str) -> dict:
 
     _validar_columnas(df_cat, ["ID", "Nombre completo", "Estatus", "Tipo de personal"], "1_Catalogo_Personal")
 
-    # [MEJORA] Aseguramos estrictamente las columnas nuevas
-    nuevas_columnas = ["Universidad", "Especialidad", "Sub especialidad", "Alta especialidad", "Periodo de ingreso"]
+    # [CORRECCIÓN] Los nombres aquí NO coincidían con los encabezados reales de
+    # la plantilla institucional ("Sub especialidad" vs "Subespecialidad" sin
+    # espacio, "Alta especialidad" vs "Alta Especialidad" con mayúscula, y
+    # "Periodo de ingreso" vs "Periodo ingreso" sin "de"). Esto generaba
+    # columnas fantasma con "N/A" que nadie usaba, mientras las columnas
+    # REALES de la plantilla quedaban sin pasar por limpieza de NaN: una
+    # celda vacía llegaba como NaN crudo hasta los reportes Excel (incluido
+    # el Reporte Maestro) y se imprimía literalmente como "nan" en vez de
+    # "N/A". Se corrigen los nombres para que coincidan con la plantilla real
+    # y se conservan alias de compatibilidad por si una plantilla antigua
+    # todavía usa la grafía anterior.
+    ALIAS_COLUMNAS = {
+        "Sub especialidad":   "Subespecialidad",
+        "Alta especialidad":  "Alta Especialidad",
+        "Periodo de ingreso": "Periodo ingreso",
+    }
+    for alias, real in ALIAS_COLUMNAS.items():
+        if alias in df_cat.columns and real not in df_cat.columns:
+            df_cat.rename(columns={alias: real}, inplace=True)
+
+    nuevas_columnas = ["Universidad", "Especialidad", "Subespecialidad", "Alta Especialidad", "Periodo ingreso"]
     for col in nuevas_columnas:
-        if col not in df_cat.columns: 
+        if col not in df_cat.columns:
             df_cat[col] = "N/A"
 
     foto_col = next((c for c in df_cat.columns if "foto" in c.lower()), None)
@@ -183,15 +202,21 @@ def cargar_plantilla(ruta: str) -> dict:
     df_cat["Tipo de personal"]   = df_cat["Tipo de personal"].apply(lambda x: str(x) if pd.notna(x) else "").apply(_normalizar_tipo)
     df_cat["Nombre completo"]    = df_cat["Nombre completo"].apply(lambda x: str(x) if pd.notna(x) else "").str.strip()
     
-    # [MEJORA] Limpiamos y aseguramos "N/A" visual
+    # [MEJORA] Limpiamos y aseguramos "N/A" visual (ahora sobre las columnas REALES)
     df_cat["Universidad"]        = df_cat["Universidad"].apply(_limpiar_na)
     df_cat["Especialidad"]       = df_cat["Especialidad"].apply(_limpiar_na)
-    df_cat["Sub especialidad"]   = df_cat["Sub especialidad"].apply(_limpiar_na)
-    df_cat["Alta especialidad"]  = df_cat["Alta especialidad"].apply(_limpiar_na)
-    
-    # El periodo de ingreso tiene una normalización especial, si no pasa, es N/A
-    df_cat["Periodo de ingreso"] = df_cat["Periodo de ingreso"].apply(lambda x: str(x) if pd.notna(x) else "").apply(_normalizar_periodo)
-    df_cat["Periodo de ingreso"] = df_cat["Periodo de ingreso"].replace("", "N/A")
+    df_cat["Subespecialidad"]    = df_cat["Subespecialidad"].apply(_limpiar_na)
+    df_cat["Alta Especialidad"]  = df_cat["Alta Especialidad"].apply(_limpiar_na)
+
+    # [CORRECCIÓN] "Periodo ingreso" no siempre es A/B: para Residentes la
+    # plantilla real usa "R". La normalización anterior forzaba cualquier
+    # valor fuera de {A,B} a "N/A", borrando ese dato válido sin avisar.
+    # Ahora sólo se limpia el vacío/NaN a "N/A" y se conserva el valor capturado;
+    # se valida A/B únicamente para personal de tipo "Interno" (que es donde
+    # aplica esa regla) y se alerta sin descartar el dato.
+    df_cat["Periodo ingreso"] = df_cat["Periodo ingreso"].apply(_limpiar_na).apply(
+        lambda x: x.upper() if isinstance(x, str) and x not in ("N/A",) else x
+    )
 
     df_cat["_activo"] = False
     df_cat["Grado"]   = ""
@@ -202,6 +227,13 @@ def cargar_plantilla(ruta: str) -> dict:
 
     res_mal_grado = df_cat[(df_cat["Tipo de personal"] == "Residente") & df_cat["_activo"] & ~df_cat["Grado"].str.match(r"^R[1-5]$", na=False)]["ID"].tolist()
     if res_mal_grado: alertas.append(f"Catálogo: Residentes con grado no estándar (IDs): {res_mal_grado[:10]}")
+
+    periodo_invalido = df_cat[
+        (df_cat["Tipo de personal"] == "Interno") & df_cat["_activo"] &
+        ~df_cat["Periodo ingreso"].isin(PERIODOS_VALIDOS | {"N/A"})
+    ]["ID"].tolist()
+    if periodo_invalido:
+        alertas.append(f"Catálogo: Internos con 'Periodo ingreso' distinto de A/B (revisar captura): {periodo_invalido[:10]}")
 
     # ── 2. Rol de Guardias ─────────────────────────────────────────────
     df_rol = _limpiar_unnamed(pd.read_excel(xls, "2_Rol_Guardias"))

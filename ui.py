@@ -3,11 +3,13 @@ SGAM - Sistema de Gestión de Asistencias Médicas
 Módulo: ui.py
 Responsabilidad: Interfaz gráfica con CustomTkinter.
 
-Mejoras v1.3:
-  - Ampliación de información del personal en el Tablero Individual.
-  - Renderizado visual de porcentajes y métricas de desempeño.
-  - Protección de memoria fig.clf() en gráficas.
-  - Integración del Estatus "Festivo" a las leyendas.
+Mejoras v2.3.3:
+  - Selector de letra de inicio (A, B, C, D) para el motor de ciclos de guardia.
+  - Integración de métricas de desempeño considerando Guardias y Faltas de Guardia.
+  - Refactorización visual de UI/UX en Analítica: Gráfica optimizada, Leyenda lateral y Tooltips interactivos.
+  - Data Grouping: Agrupación aritmética de métricas positivas y faltas totales.
+  - Fix Layout: Reubicación del Resumen de Desempeño a la tarjeta derecha (Analítica) con grid 2x2.
+  - Hotfix: Ajuste de márgenes (subplots_adjust) para evitar truncamiento en la leyenda larga.
 """
 
 import threading
@@ -51,7 +53,7 @@ ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 APP_TITLE   = "SGAM – Sistema de Gestión de Asistencias Médicas"
-APP_VERSION = "v1.3.0 Alan Jimenez & Fabrizzio Ramirez"
+APP_VERSION = "v2.3.3 Alan Jimenez & Fabrizzio Ramirez"
 WIN_W, WIN_H = 1380, 860
 
 SIDEBAR_W    = 245
@@ -74,13 +76,12 @@ class CalendarioWidget(ctk.CTkFrame):
     Muestra un calendario mensual coloreado con ampliación de datos del usuario.
     """
     DIAS_HDR = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-    # [MEJORA] Integración del color Festivo
     LEYENDA  = [
-        ("#FFD966", "Asistencia"), ("#FF4B4B", "Falta"),
-        ("#FF8C00", "Retardo"),    ("#D9D9D9", "No Laborable"),
-        ("#70AD47", "Vacaciones"), ("#ADD8E6", "Festivo"), 
-        ("#9DC3E6", "Incapacidad"),("#FFE699", "Permiso"), 
-        ("#BDD7EE", "Comisión"),   ("#F4B942", "Rotación"),
+        ("#FFD966", "Asistencia"),   ("#FF8C00", "Retardo"),      ("#FF4B4B", "Falta"),
+        ("#8EA9DB", "Guardia"),      ("#D9E1F2", "Post-Guardia"), ("#C00000", "Falta Guardia"),
+        ("#ADD8E6", "Festivo"),      ("#70AD47", "Vacaciones"),   ("#D9D9D9", "No Laborable"), 
+        ("#9DC3E6", "Incapacidad"),  ("#FFE699", "Permiso"),      ("#BDD7EE", "Comisión"),   
+        ("#F4B942", "Rotación"),
     ]
 
     def __init__(self, master, **kwargs):
@@ -106,17 +107,21 @@ class CalendarioWidget(ctk.CTkFrame):
         self.lbl_nombre = ctk.CTkLabel(self.titulo_frame, text="Sin datos cargados", font=ctk.CTkFont(family="Calibri", size=14, weight="bold"), text_color=COLOR_SIDEBAR, anchor="w")
         self.lbl_nombre.pack(anchor="w")
 
-        # [MEJORA REQUERIMIENTO 1] Contenedor para desplegar campos extendidos 
         self.info_frame = ctk.CTkFrame(self.titulo_frame, fg_color="transparent")
         self.info_frame.pack(fill="x", pady=2)
 
         # ── Grid del calendario ──────────────────────────────────────────
         self.grid_frame = ctk.CTkFrame(self, fg_color=COLOR_WHITE)
-        self.grid_frame.pack(padx=12, pady=(4, 2))
+        self.grid_frame.pack(padx=12, pady=(4, 2), fill="both", expand=True)
+
+        for c in range(7):
+            self.grid_frame.grid_columnconfigure(c, weight=1, uniform="cal")
+        for r in range(7):
+            self.grid_frame.grid_rowconfigure(r, weight=1, uniform="cal")
 
         for j, dia in enumerate(self.DIAS_HDR):
-            lbl = ctk.CTkLabel(self.grid_frame, text=dia, width=50, height=26, font=ctk.CTkFont(size=9, weight="bold"), fg_color=COLOR_SIDEBAR, text_color=COLOR_WHITE, corner_radius=4)
-            lbl.grid(row=0, column=j, padx=2, pady=2)
+            lbl = ctk.CTkLabel(self.grid_frame, text=dia, height=26, font=ctk.CTkFont(size=9, weight="bold"), fg_color=COLOR_SIDEBAR, text_color=COLOR_WHITE, corner_radius=4)
+            lbl.grid(row=0, column=j, padx=3, pady=3, sticky="nsew")
 
         # ── Leyenda de colores ──────────────────────────────
         ley_frame = ctk.CTkFrame(self, fg_color="#EEF2F7", corner_radius=8)
@@ -124,15 +129,14 @@ class CalendarioWidget(ctk.CTkFrame):
 
         ctk.CTkLabel(ley_frame, text="Leyenda:", font=ctk.CTkFont(size=9, weight="bold"), text_color="#1F3864").pack(anchor="w", padx=10, pady=(6, 2))
 
-        # Render dinámico en base a la lista extendida
-        fila1, fila2 = self.LEYENDA[:5], self.LEYENDA[5:]
-        for fila_items in [fila1, fila2]:
+        fila1, fila2, fila3 = self.LEYENDA[:5], self.LEYENDA[5:10], self.LEYENDA[10:]
+        for fila_items in [fila1, fila2, fila3]:
             row = ctk.CTkFrame(ley_frame, fg_color="#EEF2F7")
             row.pack(fill="x", padx=6, pady=2)
             for hex_c, label in fila_items:
-                chip = tk.Canvas(row, width=15, height=15, bg=hex_c, highlightthickness=1, highlightbackground="#AAAAAA")
-                chip.pack(side="left", padx=(4, 2), pady=4)
-                ctk.CTkLabel(row, text=label, font=ctk.CTkFont(size=9), text_color="#2F2F2F").pack(side="left", padx=(0, 10))
+                chip = tk.Canvas(row, width=13, height=13, bg=hex_c, highlightthickness=1, highlightbackground="#AAAAAA")
+                chip.pack(side="left", padx=(4, 2), pady=2)
+                ctk.CTkLabel(row, text=label, font=ctk.CTkFont(size=8), text_color="#2F2F2F").pack(side="left", padx=(0, 8))
         tk.Frame(ley_frame, height=4, bg="#EEF2F7").pack()
 
     # ── API pública ───────────────────────────────────────────────────────
@@ -147,25 +151,16 @@ class CalendarioWidget(ctk.CTkFrame):
 
         self.lbl_nombre.configure(text=f"{nombre} | {self._mes_nombre(mes)} {anio}")
         
-        # [MEJORA REQUERIMIENTO 1] Renderizado de todos los campos nuevos y opcionales
         for w in self.info_frame.winfo_children():
             w.destroy()
             
         campos_a_mostrar = [
-            ("ID", id_emp),
-            ("Tipo", tipo),
-            ("Especialidad", esp),
-            ("Universidad", univ),
-            ("Sub especialidad", subesp),
-            ("Alta especialidad", altaesp),
-            ("Ingreso", periodo),
-            ("Turno", turno_tipo)
+            ("ID", id_emp), ("Tipo", tipo), ("Especialidad", esp), ("Universidad", univ),
+            ("Sub especialidad", subesp), ("Alta especialidad", altaesp), ("Ingreso", periodo), ("Turno", turno_tipo)
         ]
         
-        # Grid para aprovechar el espacio (2 columnas)
         fila_idx, col_idx = 0, 0
         for label_text, valor in campos_a_mostrar:
-            # Filtramos estrictamente los nulos para no saturar la UI
             if valor and valor not in ["N/A", "nan"]:
                 row_container = ctk.CTkFrame(self.info_frame, fg_color="transparent")
                 row_container.grid(row=fila_idx, column=col_idx, sticky="w", padx=(0, 15), pady=1)
@@ -174,7 +169,7 @@ class CalendarioWidget(ctk.CTkFrame):
                 ctk.CTkLabel(row_container, text=f"{valor}", font=ctk.CTkFont(size=10), text_color="#595959").pack(side="left")
                 
                 col_idx += 1
-                if col_idx > 1:  # Máximo 2 columnas
+                if col_idx > 1: 
                     col_idx = 0
                     fila_idx += 1
 
@@ -199,11 +194,11 @@ class CalendarioWidget(ctk.CTkFrame):
             tooltip = "\n".join(filter(None, [info["turno"], info["notas"] or info["label"]]))
 
             celda = ctk.CTkLabel(
-                self.grid_frame, text=str(d), width=50, height=40,
+                self.grid_frame, text=str(d), height=40,
                 font=ctk.CTkFont(size=10, weight="bold"),
                 fg_color=info["color"], text_color="#1F1F1F", corner_radius=5,
             )
-            celda.grid(row=fila, column=col, padx=2, pady=2)
+            celda.grid(row=fila, column=col, padx=3, pady=3, sticky="nsew")
             self._tooltip(celda, tooltip)
 
             col += 1
@@ -212,8 +207,7 @@ class CalendarioWidget(ctk.CTkFrame):
                 fila += 1
 
     def _cargar_foto(self, foto_ruta: str):
-        for w in self.foto_frame.winfo_children():
-            w.destroy()
+        for w in self.foto_frame.winfo_children(): w.destroy()
 
         ruta = Path(foto_ruta) if foto_ruta else None
         if ruta and ruta.exists():
@@ -260,7 +254,7 @@ class CalendarioWidget(ctk.CTkFrame):
 # ══════════════════════════════════════════════
 class PanelAnalitica(ctk.CTkFrame):
     """
-    Panel derecho con gráfica de pastel, porcentajes en texto + filtros dinámicos.
+    Panel derecho con gráfica de pastel interactiva, porcentajes en texto + filtros dinámicos.
     """
 
     def __init__(self, master, **kwargs):
@@ -292,15 +286,16 @@ class PanelAnalitica(ctk.CTkFrame):
         self.btn_individual.pack(side="left", padx=(8, 0))
         self._modo_individual = False
 
-        # Contenedor padre de la información visual
+        # Contenedor Principal Derecho
         self.frame_main = ctk.CTkFrame(self, fg_color=COLOR_WHITE, corner_radius=8)
         self.frame_main.pack(fill="both", expand=True)
-        
-        # Subcontenedores (Textos de Métrica y Gráfica)
+
+        # Regresamos las métricas a la tarjeta derecha, en la parte superior
         self.frame_metricas = ctk.CTkFrame(self.frame_main, fg_color="transparent")
-        self.frame_metricas.pack(side="left", fill="y", padx=20, pady=20)
+        self.frame_metricas.pack(side="top", fill="x", padx=16, pady=(16, 0))
+
         self.frame_chart = ctk.CTkFrame(self.frame_main, fg_color="transparent")
-        self.frame_chart.pack(side="right", fill="both", expand=True)
+        self.frame_chart.pack(side="top", fill="both", expand=True, padx=10, pady=10)
 
         self._placeholder()
 
@@ -386,7 +381,6 @@ class PanelAnalitica(ctk.CTkFrame):
         self._dibujar_grafica(df_emp, titulo_extra=f"{self._nombre_actual}\n{subtitulo}")
 
     def _dibujar_grafica(self, df: pd.DataFrame, titulo_extra: str = ""):
-        """Renderiza gráfica de pastel y calcula los porcentajes reales de rendimiento."""
         for w in self.frame_chart.winfo_children(): w.destroy()
         for w in self.frame_metricas.winfo_children(): w.destroy()
 
@@ -396,56 +390,146 @@ class PanelAnalitica(ctk.CTkFrame):
             self._placeholder()
             return
             
-        # [MEJORA REQUERIMIENTO 4] Lógica estricta de evaluación y render en texto
-        asist = conteos.get("ASISTENCIA", 0)
-        ret   = conteos.get("RETARDO", 0)
-        fal   = conteos.get("FALTA", 0)
-        dias_evaluados = asist + ret + fal
+        # ─── Data Grouping ───
+        asistencias_agrupadas = (
+            conteos.pop("ASISTENCIA", 0) + 
+            conteos.pop("GUARDIA", 0) + 
+            conteos.pop("POST_GUARDIA", 0)
+        )
+        faltas_totales = conteos.pop("FALTA", 0) + conteos.pop("FALTA_GUARDIA", 0)
+        retardos = conteos.pop("RETARDO", 0)
         
-        pct_asist = round((asist / dias_evaluados)*100, 1) if dias_evaluados else 0.0
-        pct_ret   = round((ret / dias_evaluados)*100, 1) if dias_evaluados else 0.0
-        pct_fal   = round((fal / dias_evaluados)*100, 1) if dias_evaluados else 0.0
+        dias_evaluados = asistencias_agrupadas + faltas_totales + retardos + sum(conteos.values())
+        pct_asist = round((asistencias_agrupadas / dias_evaluados)*100, 1) if dias_evaluados else 0.0
+        pct_ret   = round((retardos / dias_evaluados)*100, 1) if dias_evaluados else 0.0
+        pct_fal   = round((faltas_totales / dias_evaluados)*100, 1) if dias_evaluados else 0.0
         
         n_emp  = df["ID"].nunique()
         titulo_seccion = titulo_extra or f"Resumen de Desempeño\n({n_emp} empleados)"
 
-        ctk.CTkLabel(self.frame_metricas, text=titulo_seccion, font=ctk.CTkFont(size=12, weight="bold"), text_color=COLOR_SIDEBAR).pack(anchor="w", pady=(10, 15))
-        
-        texto_stats = (
-            f"Días Puntuables: {dias_evaluados}\n\n"
-            f"✔️ Asistencias: {asist} ({pct_asist}%)\n\n"
-            f"⚠️ Retardos: {ret} ({pct_ret}%)\n\n"
-            f"❌ Faltas: {fal} ({pct_fal}%)"
-        )
-        ctk.CTkLabel(self.frame_metricas, text=texto_stats, justify="left", font=ctk.CTkFont(size=12, weight="bold"), text_color="#1F1F1F").pack(anchor="w")
+        ctk.CTkLabel(self.frame_metricas, text=titulo_seccion, font=ctk.CTkFont(size=14, weight="bold"), text_color=COLOR_SIDEBAR, justify="left").pack(anchor="w", pady=(0, 10))
 
-        # Configuración de la gráfica de pastel con todos los estatus (incluye vacaciones, etc.)
-        etiquetas, valores, colores = [], [], []
+        # ─── REUBICACIÓN Y DISEÑO GRID 2x2 ───
+        grid_stats = ctk.CTkFrame(self.frame_metricas, fg_color="#F8FAFC", corner_radius=8)
+        grid_stats.pack(fill="x")
+
+        # Fila 0
+        r0 = ctk.CTkFrame(grid_stats, fg_color="transparent")
+        r0.pack(fill="x", padx=16, pady=(12, 6))
+        ctk.CTkLabel(r0, text=f"📅 Días Puntuables: {dias_evaluados}", font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_SIDEBAR, width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(r0, text=f"✔️ Asistencias / Guardias / Post-Guardias: {asistencias_agrupadas} ({pct_asist}%)", font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_OK, anchor="w").pack(side="left")
+
+        # Fila 1
+        r1 = ctk.CTkFrame(grid_stats, fg_color="transparent")
+        r1.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkLabel(r1, text=f"⚠️ Retardos: {retardos} ({pct_ret}%)", font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_WARN, width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(r1, text=f"❌ Faltas Totales: {faltas_totales} ({pct_fal}%)", font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_ERR, anchor="w").pack(side="left")
+
+        # ─── GRÁFICA PASTEL ───
+        nombres_categorias = []
+        valores = []
+        colores = []
+        
+        if asistencias_agrupadas > 0:
+            nombres_categorias.append("Asistencias / Guardias /\nPost-Guardias")
+            valores.append(asistencias_agrupadas)
+            colores.append(f"#{COLOR_MAP.get('ASISTENCIA', {'hex': '4CAF50'})['hex']}")
+
+        if faltas_totales > 0:
+            nombres_categorias.append("Faltas Totales")
+            valores.append(faltas_totales)
+            colores.append(f"#{COLOR_MAP.get('FALTA', {'hex': 'F44336'})['hex']}")
+
+        if retardos > 0:
+            nombres_categorias.append("Retardos")
+            valores.append(retardos)
+            colores.append(f"#{COLOR_MAP.get('RETARDO', {'hex': 'FF9800'})['hex']}")
+
         for est, cant in conteos.items():
-            info = COLOR_MAP.get(est, COLOR_MAP["SIN_DATOS"])
-            etiquetas.append(f"{info['label']}\n({cant})")
-            valores.append(cant)
-            colores.append(f"#{info['hex']}")
+            if cant > 0:
+                info = COLOR_MAP.get(est, COLOR_MAP.get("SIN_DATOS", {"label": est, "hex": "9E9E9E"}))
+                nombres_categorias.append(info.get('label', est))
+                valores.append(cant)
+                colores.append(f"#{info['hex']}")
 
         from matplotlib.figure import Figure
-        # [MEJORA: PROTECCIÓN DE MEMORIA]
-        fig = Figure(figsize=(3.4, 3.0), dpi=80)
-        fig.clf() # Limpiamos el caché interno de Figure
+        fig = Figure(figsize=(8.5, 6.0), dpi=88)
+        fig.clf() 
         fig.patch.set_facecolor("#FFFFFF")
         ax = fig.add_subplot(111)
         ax.set_facecolor("#FFFFFF")
         
-        wedges, texts, autotexts = ax.pie(
-            valores, labels=etiquetas, colors=colores,
-            autopct="%1.1f%%", startangle=140,
-            textprops={"fontsize": 7.5},
+        # Ajuste de Layout: Reducimos right para darle más espacio a la leyenda sin deformarse
+        fig.subplots_adjust(left=0.05, bottom=0.05, right=0.45, top=0.85)
+        
+        wedges, texts = ax.pie(
+            valores, 
+            colors=colores, 
+            startangle=140, 
             wedgeprops={"linewidth": 1.5, "edgecolor": "white"}
         )
-        for t in autotexts:
-            t.set_fontsize(7); t.set_color("#2F2F2F")
-        ax.set_title("Distribución General del Mes", fontsize=9, color="#1F3864", fontweight="bold", pad=10)
+        ax.axis('equal') 
         
-        fig.tight_layout()
+        # Título centrado absoluto
+        ax.set_title(
+            "Distribución General del Mes", 
+            loc='center', 
+            pad=20, 
+            fontsize=16, 
+            color="#1F3864", 
+            fontweight="bold"
+        )
+        
+        leyenda_labels = [f"{cat}: {val}" for cat, val in zip(nombres_categorias, valores)]
+        
+        # Leyenda redimensionada, tabulada y con saltos inteligentes
+        ax.legend(
+            wedges, 
+            leyenda_labels,
+            title="Categorías",
+            title_fontsize=16,
+            loc="center left", 
+            bbox_to_anchor=(1.0, 0.5), 
+            fontsize=13,
+            handlelength=2.0,           
+            handleheight=1.5,           
+            labelspacing=1.2,           
+            frameon=False
+        )
+
+        total_datos = sum(valores)
+        annot = ax.annotate(
+            "", xy=(0,0), xytext=(20, 20), textcoords="offset points",
+            bbox=dict(boxstyle="round4,pad=0.6", fc="white", ec="gray", lw=1, alpha=0.95),
+            arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color="gray"),
+            fontsize=10, fontweight="bold", color="#2F2F2F"
+        )
+        annot.set_visible(False)
+
+        def update_annot(event, wedge_idx):
+            annot.xy = (event.xdata, event.ydata)
+            porcentaje = (valores[wedge_idx] / total_datos) * 100 if total_datos > 0 else 0
+            # Quitamos el \n temporal del tooltip si existe para mayor limpieza, o lo mantenemos. 
+            cat_limpia = nombres_categorias[wedge_idx].replace("\n", "")
+            texto_tooltip = f"{cat_limpia}\n{valores[wedge_idx]} registros ({porcentaje:.1f}%)"
+            annot.set_text(texto_tooltip)
+
+        def on_hover(event):
+            vis = annot.get_visible()
+            if event.inaxes == ax:
+                for i, wedge in enumerate(wedges):
+                    cont, _ = wedge.contains(event)
+                    if cont:
+                        update_annot(event, i)
+                        annot.set_visible(True)
+                        fig.canvas.draw_idle()
+                        return
+            
+            if vis:
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect("motion_notify_event", on_hover)
 
         self.canvas_pie = FigureCanvasTkAgg(fig, master=self.frame_chart)
         self.canvas_pie.draw()
@@ -510,16 +594,11 @@ class SGAMApp(ctk.CTk):
         win_id = canvas.create_window((0, 0), window=sb, anchor="nw")
         self._sb = sb  
 
-        def _on_resize(e):
-            canvas.itemconfig(win_id, width=e.width)
+        def _on_resize(e): canvas.itemconfig(win_id, width=e.width)
         canvas.bind("<Configure>", _on_resize)
-
-        def _on_frame(e):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_frame(e): canvas.configure(scrollregion=canvas.bbox("all"))
         sb.bind("<Configure>", _on_frame)
-
-        def _on_wheel(e):
-            canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _on_wheel(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
         canvas.bind_all("<MouseWheel>", _on_wheel)
 
         self._sep()
@@ -530,19 +609,24 @@ class SGAMApp(ctk.CTk):
         self.lbl_scanner = self._lbl_est("Sin cargar")
         self._btn("Logo Institucional (PNG)", self._cargar_logo, "🖼")
         self.lbl_logo = self._lbl_est("Opcional")
+        
         self._sep()
-
-        self._sec("⚙ PROCESAMIENTO")
+        self._sec("⚙ CONFIGURACIÓN DE MES")
+        ctk.CTkLabel(self._sb, text="Letra Inicial Guardias:", font=ctk.CTkFont(size=10), text_color=COLOR_WHITE, anchor="w").pack(padx=16, pady=(0, 2), fill="x")
+        self.combo_letra = ctk.CTkComboBox(self._sb, values=["A", "B", "C", "D"], height=30)
+        self.combo_letra.set("A")
+        self.combo_letra.pack(padx=12, pady=(0, 6), fill="x")
+        
         self.btn_proc = self._btn("Procesar Asistencias", self._procesar, "▶", color="#217346", hover="#1A5C37")
+        
         self._sep()
-
         self._sec("📤 EXPORTACIÓN")
         self.btn_exp1 = self._btn("Exportar Empleado Actual",     self._exp_actual,   "📄")
         self.btn_exp2 = self._btn("Exportar Todos (individual)",  self._exp_todos,    "📦")
         self.btn_exp3 = self._btn("Exportar con Filtros…",        self._exp_filtrado, "🔽")
         self.btn_exp4 = self._btn("Exportar Maestro (1 archivo)", self._exp_maestro, "📊", color=COLOR_PURPLE, hover="#5C2480")
+        
         self._sep()
-
         self._sec("📈 ESTADÍSTICAS")
         self.btn_stats     = self._btn("Ver Estadísticas",     self._ver_estadisticas, "🔢", color="#B8450A", hover="#8C3208")
         self.btn_exp_stats = self._btn("Exportar Estadísticas", self._exp_estadisticas, "📑", color="#8C3208",  hover="#6B2506")
@@ -572,8 +656,8 @@ class SGAMApp(ctk.CTk):
     def _panel_central(self):
         pc = ctk.CTkFrame(self, corner_radius=0, fg_color=COLOR_BG)
         pc.grid(row=0, column=1, sticky="nsew")
-        pc.grid_columnconfigure(0, weight=3)
-        pc.grid_columnconfigure(1, weight=2)
+        pc.grid_columnconfigure(0, weight=1, uniform="mitad")
+        pc.grid_columnconfigure(1, weight=1, uniform="mitad")
         pc.grid_rowconfigure(1, weight=1)
 
         bb = ctk.CTkFrame(pc, height=58, fg_color=COLOR_WHITE, corner_radius=0)
@@ -633,8 +717,7 @@ class SGAMApp(ctk.CTk):
             self._set_estado(f"Error: {e}", "error")
 
     def _mostrar_alertas(self, alertas: list):
-        if alertas:
-            messagebox.showwarning("Advertencias de validación", "Se detectaron los siguientes avisos:\n\n" + "\n".join(f"• {a}" for a in alertas[:15]))
+        if alertas: messagebox.showwarning("Advertencias de validación", "Se detectaron los siguientes avisos:\n\n" + "\n".join(f"• {a}" for a in alertas[:15]))
 
     def _cargar_scanner(self):
         rutas = filedialog.askopenfilenames(title="Reporte(s) Escáner — selecciona uno o dos archivos", filetypes=[("Excel", "*.xls *.xlsx"), ("CSV", "*.csv")])
@@ -687,6 +770,8 @@ class SGAMApp(ctk.CTk):
                 datos = cargar_plantilla(self._ruta_plantilla)
                 datos["scanner"] = self._df_scanner
                 reglas = extraer_reglas(pd.DataFrame())
+                reglas["letra_inicial_mes"] = self.combo_letra.get()
+                
                 self._datos  = datos
                 self._reglas = reglas
                 df = procesar_asistencias(datos, reglas)
@@ -706,6 +791,17 @@ class SGAMApp(ctk.CTk):
         resumen = calcular_resumen(df)
         nombres = sorted(df["Nombre_Completo"].dropna().unique().tolist())
 
+        huerfanos = df.attrs.get("huerfanos_ids", [])
+        if huerfanos:
+            n_reg = df.attrs.get("huerfanos_registros", len(huerfanos))
+            messagebox.showwarning(
+                "IDs biométricos huérfanos detectados",
+                f"Se excluyeron {n_reg} registro(s) del escáner cuyo ID biométrico "
+                f"no corresponde a ningún empleado activo de la plantilla.\n\n"
+                f"IDs huérfanos: {', '.join(huerfanos[:20])}"
+                + ("…" if len(huerfanos) > 20 else "")
+            )
+
         self.combo_emp.configure(values=nombres)
         if nombres:
             self.combo_emp.set(nombres[0])
@@ -719,8 +815,8 @@ class SGAMApp(ctk.CTk):
                 f"👥 {resumen['empleados']} empleados  |  "
                 f"📅 {resumen['total_dias_laborables']} días lab.  |  "
                 f"🟡 {c.get('ASISTENCIA', 0)} asist.  "
-                f"🔴 {c.get('RETARDO', 0)} retardos  "
-                f"🟠 {c.get('FALTA', 0)} faltas"
+                f"🏥 {c.get('GUARDIA', 0)} guardias  "
+                f"❌ {c.get('FALTA_GUARDIA', 0)} Faltas_Gu"
             )
         )
 
@@ -746,7 +842,6 @@ class SGAMApp(ctk.CTk):
         df_emp = self._df[self._df["Nombre_Completo"] == nombre].copy()
         if df_emp.empty: return
 
-        # [MEJORA REQUERIMIENTO 1] Extracción completa de variables para la inyección visual
         primera  = df_emp.iloc[0]
         id_emp   = str(primera.get("ID", ""))
         tipo     = str(primera.get("Tipo", ""))
@@ -763,7 +858,7 @@ class SGAMApp(ctk.CTk):
 
         df_mes = df_emp[(fechas.dt.month == mes) & (fechas.dt.year == anio)]
 
-        turnos_mes = df_mes["Guardia_Tipo"].replace("", pd.NA).dropna()
+        turnos_mes = df_mes["Turno_Servicio"].replace("", pd.NA).dropna()
         turno_tipo = str(turnos_mes.mode().iloc[0]) if len(turnos_mes) > 0 else ""
 
         self.calendario.cargar_mes(
@@ -868,7 +963,6 @@ class SGAMApp(ctk.CTk):
                 sel = cb.get()
                 result[key] = None if sel.startswith("(") else sel
             win.destroy()
-
         def no():
             cancel[0] = True
             win.destroy()
@@ -897,10 +991,8 @@ class SGAMApp(ctk.CTk):
         tabs = ctk.CTkTabview(win, fg_color=COLOR_WHITE, corner_radius=8)
         tabs.pack(fill="both", expand=True, padx=12, pady=10)
 
-        for nombre_tab in ["Individual", "Por Tipo", "Por Especialidad", "Tendencia Semanal", "Días Críticos"]:
-            tabs.add(nombre_tab)
+        for nombre_tab in ["Individual", "Por Tipo", "Por Especialidad", "Tendencia Semanal", "Días Críticos"]: tabs.add(nombre_tab)
 
-        # [MEJORA REQUERIMIENTO 4] Reemplazamos visualmente Días Lab por Días Evaluados
         df_ind = estadisticas_por_empleado(self._df)
         self._tabla_stats(tabs.tab("Individual"), df_ind, [
             ("Nombre", 220, "w"), ("Tipo", 120, "center"),
@@ -917,14 +1009,11 @@ class SGAMApp(ctk.CTk):
 
         df_tipo = resumen_por_tipo(self._df)
         self._tabla_stats(tabs.tab("Por Tipo"), df_tipo, [(c, 110, "center") for c in df_tipo.columns], list(df_tipo.columns))
-
         df_esp = resumen_por_especialidad(self._df)
         self._tabla_stats(tabs.tab("Por Especialidad"), df_esp, [(c, 120 if i == 0 else 95, "w" if i == 0 else "center") for i, c in enumerate(df_esp.columns)], list(df_esp.columns))
-
         df_sem = calcular_tendencia_semanal(self._df)
         self._tabla_stats(tabs.tab("Tendencia Semanal"), df_sem, [(c, 120, "center") for c in df_sem.columns], list(df_sem.columns))
         self._grafica_tendencia(tabs.tab("Tendencia Semanal"), df_sem)
-
         df_crit = dias_criticos(self._df, top_n=15)
         self._tabla_stats(tabs.tab("Días Críticos"), df_crit, [(c, 130 if i == 0 else 100, "center") for i, c in enumerate(df_crit.columns)], list(df_crit.columns))
 
@@ -975,8 +1064,7 @@ class SGAMApp(ctk.CTk):
                 fg_color = "black"
                 if isinstance(val, float):
                     if "falta" in key.lower() and val > 25: fg_color = "#C00000"
-                    elif "asistencia" in key.lower() or "presencia" in key.lower():
-                        fg_color = "#217346" if val >= 80 else ("#C55A11" if val >= 60 else "#C00000")
+                    elif "asistencia" in key.lower() or "presencia" in key.lower(): fg_color = "#217346" if val >= 80 else ("#C55A11" if val >= 60 else "#C00000")
                 tk.Label(inner, text=texto, bg=bg, fg=fg_color, font=F_BODY, anchor=anchor, width=ancho // 7, pady=3, padx=4).grid(row=i + 1, column=j, sticky="ew", padx=1, pady=0)
 
     def _grafica_tendencia(self, parent, df_sem: pd.DataFrame):
@@ -1000,7 +1088,6 @@ class SGAMApp(ctk.CTk):
             ax.tick_params(labelsize=7)
             
             fig.tight_layout()
-            
             self.canvas_tendencia = FigureCanvasTkAgg(fig, master=parent)
             self.canvas_tendencia.draw()
             self.canvas_tendencia.get_tk_widget().pack(side="bottom", fill="x", padx=8, pady=(4, 8))
@@ -1029,7 +1116,7 @@ class SGAMApp(ctk.CTk):
 
 
 # ──────────────────────────────────────────────
-# Entry point
+# Entry point 
 # ──────────────────────────────────────────────
 def iniciar_app():
     app = SGAMApp()
