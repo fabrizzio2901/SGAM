@@ -11,6 +11,8 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+from app_info import APP_TITLE, VERSION
+
 # ── Importación diferida para mostrar errores claros de dependencias ─────
 def _verificar_dependencias():
     dependencias = {
@@ -36,8 +38,8 @@ def _verificar_dependencias():
 
 def main():
     print("=" * 55)
-    print("  SGAM – Sistema de Gestión de Asistencias Médicas")
-    print("  Versión 1.0.0  |  Iniciando...")
+    print(f"  {APP_TITLE}")
+    print(f"  Versión {VERSION}  |  Iniciando...")
     print("=" * 55)
 
     _verificar_dependencias()

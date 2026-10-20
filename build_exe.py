@@ -1,54 +1,44 @@
-"""
-SGAM - Script de construcción del ejecutable .exe
-Usa PyInstaller para empaquetar la aplicación.
-Ejecutar con: python build_exe.py
+"""Compila dist/SGAM.exe usando la configuración portable de SGAM.spec.
+
+Uso: python build_exe.py [--clean]
 """
 
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
-APP_NAME    = "SGAM"
-MAIN_SCRIPT = "main.py"
-ICON_PATH   = "assets/icono.ico"   # Crear o dejar comentado si no existe
-BASE_DIR    = Path(__file__).parent
+BASE_DIR = Path(__file__).resolve().parent
+SPEC_FILE = BASE_DIR / "SGAM.spec"
+
+
+def _asegurar_pyinstaller():
+    try:
+        import PyInstaller  # noqa: F401
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
 
 def build():
-    args = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconfirm",
-        "--onefile",                      # Un solo ejecutable
-        "--windowed",                     # Sin ventana de consola
-        f"--name={APP_NAME}",
-        "--add-data=assets;assets",       # Incluir carpeta de recursos
-        "--add-data=data;data",           # Incluir datos de ejemplo (opcional)
-        "--hidden-import=customtkinter",
-        "--hidden-import=PIL._tkinter_finder",
-        "--hidden-import=openpyxl",
-        "--hidden-import=pandas",
-        "--hidden-import=matplotlib",
-        "--collect-data=customtkinter",
-        "--collect-data=matplotlib",
-    ]
-
-    # Agregar ícono si existe
-    if Path(ICON_PATH).exists():
-        args.append(f"--icon={ICON_PATH}")
-
-    args.append(MAIN_SCRIPT)
-
-    print("🔨 Construyendo ejecutable SGAM...")
-    print(f"   Comando: {' '.join(args)}\n")
-
-    result = subprocess.run(args, cwd=BASE_DIR)
-
-    if result.returncode == 0:
-        exe_path = BASE_DIR / "dist" / f"{APP_NAME}.exe"
-        print(f"\n✅ Ejecutable generado en: {exe_path}")
-    else:
-        print("\n❌ Error durante la construcción. Revise la salida de PyInstaller.")
+    if platform.system() != "Windows":
+        print("Para generar el ejecutable de Windows, compila este proyecto en Windows.")
         sys.exit(1)
+    if not SPEC_FILE.exists():
+        print(f"No se encontró {SPEC_FILE}")
+        sys.exit(1)
+
+    _asegurar_pyinstaller()
+    args = [sys.executable, "-m", "PyInstaller", "--noconfirm"]
+    if "--clean" in sys.argv[1:]:
+        args.append("--clean")
+    args.append(str(SPEC_FILE))
+
+    print("Construyendo SGAM; el empaquetado puede tardar varios minutos.", flush=True)
+    result = subprocess.run(args, cwd=BASE_DIR)
+    if result.returncode:
+        print("La compilación falló. Revisa los mensajes de PyInstaller.")
+        sys.exit(result.returncode)
+    print(f"Ejecutable generado en: {BASE_DIR / 'dist' / 'SGAM.exe'}")
 
 
 if __name__ == "__main__":

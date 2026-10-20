@@ -3,6 +3,11 @@ SGAM - Sistema de Gestión de Asistencias Médicas
 Módulo: ui.py
 Responsabilidad: Interfaz gráfica con CustomTkinter.
 
+Mejoras v2.3.4:
+  - Métricas compartidas con estadísticas y exportaciones.
+  - Guardias, postguardias y faltas de guardia incluidas en todas las vistas.
+  - Versión y créditos centralizados en app_info.py.
+
 Mejoras v2.3.3:
   - Selector de letra de inicio (A, B, C, D) para el motor de ciclos de guardia.
   - Integración de métricas de desempeño considerando Guardias y Faltas de Guardia.
@@ -27,11 +32,13 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+from app_info import APP_TITLE, APP_VERSION
+
 from ingestion import (cargar_plantilla, extraer_reglas,
                         cargar_reporte_scanner, cargar_reporte_scanner_hospital,
                         cargar_dos_scanners)
 from core import (
-    procesar_asistencias, calcular_resumen, filtrar_por_empleado, COLOR_MAP,
+    procesar_asistencias, calcular_resumen, calcular_metricas, filtrar_por_empleado, COLOR_MAP,
     obtener_tipos_unicos, obtener_especialidades_unicas,
 )
 from export import (
@@ -52,8 +59,6 @@ from utils import (
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
-APP_TITLE   = "SGAM – Sistema de Gestión de Asistencias Médicas"
-APP_VERSION = "v2.3.3 Alan Jimenez & Fabrizzio Ramirez"
 WIN_W, WIN_H = 1380, 860
 
 SIDEBAR_W    = 245
@@ -76,12 +81,13 @@ class CalendarioWidget(ctk.CTkFrame):
     Muestra un calendario mensual coloreado con ampliación de datos del usuario.
     """
     DIAS_HDR = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-    LEYENDA  = [
-        ("#FFD966", "Asistencia"),   ("#FF8C00", "Retardo"),      ("#FF4B4B", "Falta"),
-        ("#8EA9DB", "Guardia"),      ("#D9E1F2", "Post-Guardia"), ("#C00000", "Falta Guardia"),
-        ("#ADD8E6", "Festivo"),      ("#70AD47", "Vacaciones"),   ("#D9D9D9", "No Laborable"), 
-        ("#9DC3E6", "Incapacidad"),  ("#FFE699", "Permiso"),      ("#BDD7EE", "Comisión"),   
-        ("#F4B942", "Rotación"),
+    LEYENDA = [
+        (f"#{COLOR_MAP[estatus]['hex']}", COLOR_MAP[estatus]["label"])
+        for estatus in (
+            "ASISTENCIA", "RETARDO", "FALTA", "GUARDIA", "POST_GUARDIA",
+            "FALTA_GUARDIA", "FESTIVO", "VACACIONES", "NO_LABORABLE",
+            "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION", "DESCANSO",
+        )
     ]
 
     def __init__(self, master, **kwargs):
@@ -129,8 +135,8 @@ class CalendarioWidget(ctk.CTkFrame):
 
         ctk.CTkLabel(ley_frame, text="Leyenda:", font=ctk.CTkFont(size=9, weight="bold"), text_color="#1F3864").pack(anchor="w", padx=10, pady=(6, 2))
 
-        fila1, fila2, fila3 = self.LEYENDA[:5], self.LEYENDA[5:10], self.LEYENDA[10:]
-        for fila_items in [fila1, fila2, fila3]:
+        for inicio in range(0, len(self.LEYENDA), 5):
+            fila_items = self.LEYENDA[inicio:inicio + 5]
             row = ctk.CTkFrame(ley_frame, fg_color="#EEF2F7")
             row.pack(fill="x", padx=6, pady=2)
             for hex_c, label in fila_items:
@@ -384,25 +390,28 @@ class PanelAnalitica(ctk.CTkFrame):
         for w in self.frame_chart.winfo_children(): w.destroy()
         for w in self.frame_metricas.winfo_children(): w.destroy()
 
-        lab = df[df["Estatus"] != "NO_LABORABLE"]
-        conteos = lab["Estatus"].value_counts().to_dict()
+        conteos = df["Estatus"].value_counts().to_dict()
         if not conteos:
             self._placeholder()
             return
+
+        # Los descansos se muestran en la distribución, pero no reducen
+        # los porcentajes de asistencia sobre días puntuables.
+        descansos = conteos.pop("DESCANSO", 0)
+        no_laborables = conteos.pop("NO_LABORABLE", 0)
             
         # ─── Data Grouping ───
-        asistencias_agrupadas = (
-            conteos.pop("ASISTENCIA", 0) + 
-            conteos.pop("GUARDIA", 0) + 
-            conteos.pop("POST_GUARDIA", 0)
-        )
-        faltas_totales = conteos.pop("FALTA", 0) + conteos.pop("FALTA_GUARDIA", 0)
-        retardos = conteos.pop("RETARDO", 0)
-        
-        dias_evaluados = asistencias_agrupadas + faltas_totales + retardos + sum(conteos.values())
-        pct_asist = round((asistencias_agrupadas / dias_evaluados)*100, 1) if dias_evaluados else 0.0
-        pct_ret   = round((retardos / dias_evaluados)*100, 1) if dias_evaluados else 0.0
-        pct_fal   = round((faltas_totales / dias_evaluados)*100, 1) if dias_evaluados else 0.0
+        metricas = calcular_metricas(df)
+        asistencias_agrupadas = metricas["asistencias"]
+        faltas_totales = metricas["faltas"]
+        retardos = metricas["retardos"]
+        for estado in ("ASISTENCIA", "GUARDIA", "POST_GUARDIA", "FALTA", "FALTA_GUARDIA", "RETARDO"):
+            conteos.pop(estado, None)
+
+        dias_evaluados = metricas["dias_evaluados"]
+        pct_asist = metricas["pct_asistencia"]
+        pct_ret = metricas["pct_retardo"]
+        pct_fal = metricas["pct_falta"]
         
         n_emp  = df["ID"].nunique()
         titulo_seccion = titulo_extra or f"Resumen de Desempeño\n({n_emp} empleados)"
@@ -424,6 +433,11 @@ class PanelAnalitica(ctk.CTkFrame):
         r1.pack(fill="x", padx=16, pady=(0, 12))
         ctk.CTkLabel(r1, text=f"⚠️ Retardos: {retardos} ({pct_ret}%)", font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_WARN, width=200, anchor="w").pack(side="left")
         ctk.CTkLabel(r1, text=f"❌ Faltas Totales: {faltas_totales} ({pct_fal}%)", font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_ERR, anchor="w").pack(side="left")
+
+        if descansos:
+            ctk.CTkLabel(grid_stats, text=f"🟣 Descansos: {descansos} (fuera de días puntuables)", font=ctk.CTkFont(size=11), text_color=COLOR_SIDEBAR, anchor="w").pack(fill="x", padx=16, pady=(0, 10))
+
+        ctk.CTkLabel(self.frame_metricas, text="Desempeño: porcentaje de días puntuables. Gráfica: distribución de todos los días, incluidas incidencias y descansos.", font=ctk.CTkFont(size=9), text_color="#595959", justify="left", wraplength=500).pack(anchor="w", pady=(6, 0))
 
         # ─── GRÁFICA PASTEL ───
         nombres_categorias = []
@@ -449,6 +463,13 @@ class PanelAnalitica(ctk.CTkFrame):
             if cant > 0:
                 info = COLOR_MAP.get(est, COLOR_MAP.get("SIN_DATOS", {"label": est, "hex": "9E9E9E"}))
                 nombres_categorias.append(info.get('label', est))
+                valores.append(cant)
+                colores.append(f"#{info['hex']}")
+
+        for est, cant in (("DESCANSO", descansos), ("NO_LABORABLE", no_laborables)):
+            if cant > 0:
+                info = COLOR_MAP[est]
+                nombres_categorias.append(info["label"])
                 valores.append(cant)
                 colores.append(f"#{info['hex']}")
 
@@ -726,10 +747,12 @@ class SGAMApp(ctk.CTk):
             from pathlib import Path as _P
             def _auto_load(ruta):
                 ext = _P(ruta).suffix.lower()
+                if ext == ".csv": return cargar_reporte_scanner(ruta)
                 if ext == ".xls": return cargar_reporte_scanner_hospital(ruta)
                 import pandas as _pd
-                xl = _pd.ExcelFile(ruta)
-                if "Reporte de Excepciones" in xl.sheet_names: return cargar_reporte_scanner_hospital(ruta)
+                with _pd.ExcelFile(ruta) as xl:
+                    if "Reporte de Excepciones" in xl.sheet_names:
+                        return cargar_reporte_scanner_hospital(ruta)
                 return cargar_reporte_scanner(ruta)
 
             if len(rutas) == 1:
@@ -988,6 +1011,8 @@ class SGAMApp(ctk.CTk):
         hdr.pack(fill="x")
         ctk.CTkLabel(hdr, text="📈  Estadísticas Avanzadas del Período", font=ctk.CTkFont(size=14, weight="bold"), text_color="white").pack(side="left", padx=18, pady=12)
 
+        ctk.CTkLabel(win, text="Asistencias = ordinarias + guardias + postguardias. Faltas = ordinarias + de guardia. Porcentajes sobre días puntuables.", font=ctk.CTkFont(size=10), text_color=COLOR_SIDEBAR, wraplength=920, justify="left").pack(anchor="w", padx=18, pady=(8, 0))
+
         tabs = ctk.CTkTabview(win, fg_color=COLOR_WHITE, corner_radius=8)
         tabs.pack(fill="both", expand=True, padx=12, pady=10)
 
@@ -998,13 +1023,16 @@ class SGAMApp(ctk.CTk):
             ("Nombre", 220, "w"), ("Tipo", 120, "center"),
             ("Especialidad", 130, "center"), ("Grado", 55, "center"),
             ("Periodo", 60, "center"), ("Días Eval.", 70, "center"),
-            ("Asist.", 55, "center"), ("Retardos", 65, "center"),
-            ("Faltas", 55, "center"), ("% Asist.", 65, "center"),
+            ("Asist./G./PG", 90, "center"), ("Guardias", 70, "center"),
+            ("Post-G.", 65, "center"), ("Retardos", 65, "center"),
+            ("Faltas totales", 90, "center"), ("Falta G.", 65, "center"),
+            ("Descansos", 80, "center"),
+            ("% Asist.", 65, "center"),
             ("% Falta", 60, "center"), ("% Presencia", 80, "center"),
         ], [
             "Nombre_Completo", "Tipo", "Especialidad", "Grado",
-            "Periodo_Ingreso", "dias_evaluados", "asistencias", "retardos",
-            "faltas", "pct_asistencia", "pct_falta", "pct_presencia",
+            "Periodo_Ingreso", "dias_evaluados", "asistencias", "guardias", "post_guardias", "retardos",
+            "faltas", "faltas_guardia", "descansos", "pct_asistencia", "pct_falta", "pct_presencia",
         ])
 
         df_tipo = resumen_por_tipo(self._df)
@@ -1078,9 +1106,9 @@ class SGAMApp(ctk.CTk):
             
             x     = range(len(df_sem))
             ancho = 0.28
-            ax.bar([i - ancho for i in x], df_sem["Asistencias"], width=ancho, label="Asistencias", color="#FFD966", edgecolor="white")
-            ax.bar(x, df_sem["Retardos"], width=ancho, label="Retardos", color="#FF4B4B", edgecolor="white")
-            ax.bar([i + ancho for i in x], df_sem["Faltas"], width=ancho, label="Faltas", color="#FF8C00", edgecolor="white")
+            ax.bar([i - ancho for i in x], df_sem["Asistencias"], width=ancho, label="Asist./G./PG", color=f"#{COLOR_MAP['ASISTENCIA']['hex']}", edgecolor="white")
+            ax.bar(x, df_sem["Retardos"], width=ancho, label="Retardos", color=f"#{COLOR_MAP['RETARDO']['hex']}", edgecolor="white")
+            ax.bar([i + ancho for i in x], df_sem["Faltas"], width=ancho, label="Faltas totales", color=f"#{COLOR_MAP['FALTA']['hex']}", edgecolor="white")
             ax.set_xticks(list(x))
             ax.set_xticklabels(df_sem["Semana"].tolist(), fontsize=7)
             ax.legend(fontsize=7, loc="upper right")

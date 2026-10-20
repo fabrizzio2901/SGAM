@@ -45,6 +45,13 @@ INCIDENCIA_TIPO_MAP = {
 
 GUARDIAS_ORDEN = ["A", "B", "C", "D"]
 
+# Hoja 7_Descansos: nombre de día -> weekday() de Python (lunes=0 ... domingo=6)
+DIAS_SEMANA_MAP = {
+    "lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3,
+    "viernes": 4, "sabado": 5, "domingo": 6,
+}
+IDS_GENERICOS = {"generico", "genérico", "todos", "todo", "general"}
+
 HORARIOS_GUARDIA_DEFAULT = {
     "A": {"hora_inicio": time(7, 0), "hora_fin": time(15, 0), "label": "Guardia A"},
     "B": {"hora_inicio": time(7, 0), "hora_fin": time(15, 0), "label": "Guardia B"},
@@ -131,6 +138,11 @@ def _parse_hora_segura(val) -> Optional[time]:
     except Exception:
         pass
     return None
+
+def _sin_acentos(s: str) -> str:
+    return (str(s).lower().strip()
+            .replace("á", "a").replace("é", "e").replace("í", "i")
+            .replace("ó", "o").replace("ú", "u"))
 
 def _limpiar_na(val):
     """Helper para normalizar vacíos en texto hacia 'N/A' visual."""
@@ -326,11 +338,49 @@ def cargar_plantilla(ruta: str) -> dict:
         alertas.append("No se detectó la pestaña '6_Dias_Festivos'. Se omitirán descansos festivos automáticos.")
 
 
+    # ── 7. Descansos [NUEVA HOJA] ──────────────────────────────────────
+    # Estructura: {"generico": {"dias": {weekday}, "fechas": {date: motivo}},
+    #              "por_id":   {id: {"dias": {weekday}, "fechas": {date: motivo}}}}
+    # ID = "generico" aplica a todo el personal; un ID concreto sólo a esa persona.
+    # Dia = nombre de día (descanso semanal recurrente) u "Otro" con Fecha(Opcional).
+    descansos = {"generico": {"dias": set(), "fechas": {}}, "por_id": {}}
+    if "7_Descansos" in xls.sheet_names:
+        try:
+            df_d = _limpiar_unnamed(pd.read_excel(xls, "7_Descansos"))
+            df_d.columns = [str(c).strip() for c in df_d.columns]
+            if not df_d.empty and len(df_d.columns) > 0:
+                _validar_columnas(df_d, ["ID", "Dia"], "7_Descansos")
+                col_fecha = next((c for c in df_d.columns if c.lower().startswith("fecha")), None)
+                df_d = df_d.dropna(subset=["ID"])
+                for _, r in df_d.iterrows():
+                    raw_id = str(r["ID"]).strip()
+                    es_gen = _sin_acentos(raw_id) in IDS_GENERICOS
+                    destino = descansos["generico"] if es_gen else \
+                        descansos["por_id"].setdefault(_norm_id(raw_id), {"dias": set(), "fechas": {}})
+
+                    dia_txt = _sin_acentos(r["Dia"]) if pd.notna(r["Dia"]) else ""
+                    f = _to_date(r[col_fecha]) if col_fecha and pd.notna(r[col_fecha]) else None
+
+                    if f is not None:                       # fecha puntual (tenga "Otro" o un día)
+                        destino["fechas"][f] = "Descanso" if dia_txt in ("", "otro") else f"Descanso ({dia_txt.capitalize()})"
+                    elif dia_txt in DIAS_SEMANA_MAP:        # descanso semanal recurrente
+                        destino["dias"].add(DIAS_SEMANA_MAP[dia_txt])
+                    elif dia_txt in ("", "otro"):
+                        alertas.append(f"7_Descansos: fila con Dia='Otro' sin fecha (ID {raw_id}), se ignoró.")
+                    else:
+                        alertas.append(f"7_Descansos: día no reconocido '{r['Dia']}' (ID {raw_id}), se ignoró.")
+        except Exception as e:
+            alertas.append(f"Descansos: Hubo un problema procesando la pestaña - {e}")
+    else:
+        alertas.append("No se detectó la pestaña '7_Descansos'. No se aplicarán descansos semanales/puntuales.")
+
+    xls.close()
     return {
         "catalogo":     df_cat,
         "rol_guardias": df_rol,
         "incidencias":  df_inc,
         "festivos":     dic_festivos, # Exponemos el diccionario hacia el exterior
+        "descansos":    descansos,
         "alertas":      alertas,
     }
 

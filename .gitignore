@@ -1,0 +1,24 @@
+# Entornos y archivos generados
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.idea/
+build/
+dist/
+demo_output/
+
+# Los registros institucionales y reportes exportados son datos locales.
+pruebas excel/
+data/
+*.xls
+*.xlsx
+!Plantilla SGAM V2 sin datos.xlsx
+
+# Archivos temporales del editor y del sistema
+*.log
+*.tmp
+~$*
+.DS_Store
+Thumbs.db

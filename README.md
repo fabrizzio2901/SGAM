@@ -1,109 +1,122 @@
-# SGAM — conciliación de asistencias
+# SGAM · Sistema de Gestión de Asistencias Médicas
 
-[English](README.en.md)
+**De registros biométricos a un calendario de asistencia auditable.** SGAM es una aplicación de escritorio para Windows que cruza el padrón de internos y residentes, los roles de guardia y las incidencias con reportes de entrada y salida. Normaliza archivos heterogéneos, evalúa cada día con reglas explícitas y entrega vistas y reportes Excel para revisión administrativa.
 
-Aplicación de escritorio en Python para cruzar un catálogo de personal, roles de guardia e incidencias con registros de entrada y salida. Presenta un calendario por persona y permite exportar reportes Excel.
+**Versión 2.3.4** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
 
-Está orientada a la revisión administrativa de asistencias de internos y residentes. El procesamiento utiliza archivos locales; este repositorio no demuestra una integración directa con un dispositivo biométrico ni resultados de uso institucional.
+**Autores:** Alan Jiménez y Fabrizzio Ramírez · [English documentation](README.en.md)
 
-## Funciones presentes en el código
+> SGAM procesa archivos locales. No se conecta directamente a dispositivos biométricos ni sustituye la revisión humana de incidencias o nómina.
 
-- Lectura y normalización de una plantilla Excel y reportes de escáner.
-- Detección de registros ajenos al catálogo y advertencias de validación.
-- Evaluación de asistencias, retardos, faltas, guardias y postguardias.
-- Aplicación de incidencias y días festivos.
-- Consulta por persona, filtros y paneles de análisis.
-- Exportación individual, por grupo y consolidada a Excel.
+## Qué resuelve
 
-## Ejecutar
+| Necesidad | Implementación |
+| --- | --- |
+| Unir fuentes distintas | Normaliza IDs, fechas y marcas de plantillas Excel, reportes `.xls`/`.xlsx` y CSV genéricos. |
+| Explicar cada resultado | Aplica incidencias, guardias A–D, postguardias, festivos, descansos y jornada ordinaria con una prioridad definida. Conserva notas por día. |
+| Encontrar errores de captura | Advierte sobre IDs duplicados, formatos inválidos y marcas que no pertenecen al catálogo activo. |
+| Revisar y compartir | Muestra calendario por persona, filtros, gráficas y exportaciones individuales, consolidadas y estadísticas. |
 
-Requiere Python con Tk/Tcl para la interfaz. El procesamiento se verificó con Python 3.12; no hay una versión de Python fijada en el repositorio.
+La interfaz, el procesamiento y las exportaciones usan `calcular_metricas()` como fuente común para los conteos y porcentajes. Esto evita que un mismo mes aparezca con cifras distintas en pantalla y en Excel.
 
-```bash
-git clone https://github.com/fabrizzio2901/SGAM.git
-cd SGAM
-python -m venv .venv
+## Vista de la arquitectura
+
+```mermaid
+flowchart LR
+    A[Plantilla institucional<br/>catálogo, roles e incidencias] --> B[ingestion.py<br/>validación y normalización]
+    C[Reportes de escáner<br/>XLS, XLSX o CSV] --> B
+    B --> D[core.py<br/>calendario y reglas]
+    D --> E[ui.py<br/>consulta y gráficas]
+    D --> F[utils.py<br/>métricas y estadísticas]
+    D --> G[export.py<br/>reportes Excel]
+    F --> E
+    F --> G
 ```
+
+El motor selecciona el mes predominante entre las marcas de IDs activos y genera **todos los días** de ese mes. Conserva un día adicional de marcas para evaluar las salidas de guardias que cruzan el fin de mes.
+
+## Inicio rápido
+
+Requiere Windows y Python con Tk/Tcl. Para ejecutar desde el código fuente:
 
 ```powershell
-# Windows PowerShell
+git clone https://github.com/fabrizzio2901/SGAM.git
+cd SGAM
+py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-```bash
-# macOS / Linux
-source .venv/bin/activate
-```
-
-```bash
 python -m pip install -r requirements.txt
 python main.py
 ```
 
-Dependencias declaradas: CustomTkinter, pandas, openpyxl, Matplotlib, Pillow, xlrd y PyInstaller. No requiere claves de API.
+Si PowerShell no permite activar el entorno, puedes ejecutar `.\.venv\Scripts\python.exe` en lugar de `python` en los últimos dos comandos. El archivo `SGAM_Proyecto_1.2.py` es un acceso compatible al mismo inicio; `main.py` es el punto de entrada recomendado.
 
-## Formato de entrada actual
+### Prueba con datos ficticios
 
-El lector activo es `cargar_plantilla` en `ingestion.py`. Las primeras cinco hojas deben existir, aunque las tres de incidencias pueden estar vacías.
-
-| Hoja | Columnas necesarias |
-|---|---|
-| `1_Catalogo_Personal` | `ID`, `Nombre completo`, `Estatus`, `Tipo de personal` |
-| `2_Rol_Guardias` | `ID`, `Rotación` |
-| `3_Registro_Incidencias` | Si tiene registros: `ID`, `Ausencia Justificada`, `Fecha Inicio`, `Fecha Termino` |
-| `4_Vacaciones` | Las mismas columnas de incidencias |
-| `5_Rotaciones` | Las mismas columnas de incidencias |
-| `6_Dias_Festivos`, opcional | Columna A: motivo; columna B: fecha |
-
-El catálogo admite información adicional, como `Universidad`, `Especialidad`, `Subespecialidad`, `Alta Especialidad`, `Periodo ingreso` y una columna de foto. `Rotación` utiliza grupos A, B, C o D.
-
-Para una prueba desde la interfaz, utiliza un escáner **.xlsx** con columnas `ID`, `Fecha`, `Entrada` y `Salida`. Debe incluir al menos una entrada con fecha válida y un ID del catálogo. El módulo de lectura admite CSV, pero la selección de un CSV en la interfaz pasa por `pd.ExcelFile` y puede fallar; ese flujo queda pendiente de corrección.
-
-## Ejemplo con datos ficticios
-
-Guarda el siguiente contenido como `demo_local.py` en una copia de trabajo y ejecuta `python demo_local.py`. Crea dos archivos nuevos para la demostración; ejecútalo en una carpeta donde esos nombres no contengan trabajo previo.
-
-```python
-import pandas as pd
-
-with pd.ExcelWriter("demo-maestra.xlsx", engine="openpyxl") as writer:
-    pd.DataFrame([{
-        "ID": "DEMO001", "Nombre completo": "PERSONA FICTICIA",
-        "Estatus": "activo", "Tipo de personal": "interno"
-    }]).to_excel(writer, sheet_name="1_Catalogo_Personal", index=False)
-    pd.DataFrame([{"ID": "DEMO001", "Rotación": "A"}]).to_excel(
-        writer, sheet_name="2_Rol_Guardias", index=False)
-    for sheet in ["3_Registro_Incidencias", "4_Vacaciones", "5_Rotaciones"]:
-        pd.DataFrame(columns=[
-            "ID", "Ausencia Justificada", "Fecha Inicio", "Fecha Termino"
-        ]).to_excel(writer, sheet_name=sheet, index=False)
-
-pd.DataFrame([{
-    "ID": "DEMO001", "Fecha": "2026-01-02",
-    "Entrada": "07:00", "Salida": "15:00"
-}]).to_excel("demo-scanner.xlsx", index=False)
+```powershell
+python examples/generate_demo.py
 ```
 
-Abre la app, carga `demo-maestra.xlsx` y `demo-scanner.xlsx`, elige **A** como letra inicial del mes y procesa. Selecciona la persona ficticia y exporta su reporte.
+El comando crea `demo_output/demo_plantilla.xlsx` y `demo_output/demo_scanner.xlsx` con **dos personas ficticias** y marcas de abril de 2026. En la aplicación:
 
-El generador existente `generar_datos_ejemplo.py` declara que usa identificadores procedentes de un escáner real. Antes de compartir datos o capturas del repositorio, confirma su anonimización y autorización. El ejemplo anterior utiliza un identificador creado para esta documentación.
+1. Carga `demo_plantilla.xlsx` como plantilla maestra.
+2. Carga `demo_scanner.xlsx` como reporte de escáner.
+3. Elige la letra inicial A y pulsa **Procesar Asistencias**.
+4. Explora el calendario, los filtros y la exportación a Excel.
 
-## Reglas y arquitectura
+La demostración usa jornadas ordinarias; las pruebas automatizadas cubren también la prioridad de guardias y descansos. El generador se detiene si los archivos de salida ya existen para evitar sobrescribir datos.
 
-`main.py` inicia la interfaz de `ui.py`. Esta carga archivos mediante `ingestion.py`, llama a `core.py` y exporta con `export.py`; `utils.py` aporta estadísticas.
+## Contrato de entrada
 
-El motor obtiene el mes más frecuente de los registros aplicables al catálogo, evalúa al personal activo y construye un ciclo A–B–C–D. La interfaz permite elegir la letra inicial del mes. Actualmente llama a `extraer_reglas` con un DataFrame vacío y utiliza valores predeterminados: no carga las reglas desde una hoja `1_Reglas_ID`.
+La plantilla vacía [Plantilla SGAM V2 sin datos.xlsx](Plantilla%20SGAM%20V2%20sin%20datos.xlsx) contiene las siete hojas admitidas. Las primeras cinco son obligatorias:
 
-Existe también `SGAM_Proyecto_1.2.py` como implementación alternativa. El procedimiento documentado aquí utiliza `main.py`.
+| Hoja | Columnas mínimas |
+| --- | --- |
+| `1_Catalogo_Personal` | `ID`, `Nombre completo`, `Estatus`, `Tipo de personal` |
+| `2_Rol_Guardias` | `ID`, `Rotación` |
+| `3_Registro_Incidencias` | `ID`, `Ausencia Justificada`, `Fecha Inicio`, `Fecha Termino` cuando tiene registros |
+| `4_Vacaciones` | Igual que incidencias |
+| `5_Rotaciones` | Igual que incidencias |
+| `6_Dias_Festivos` (opcional) | Motivo y fecha en las dos primeras columnas |
+| `7_Descansos` (opcional) | `ID`, `Dia` y fecha opcional |
 
-## Verificación y pendientes
+El catálogo admite universidad, especialidad, subespecialidad, alta especialidad, período de ingreso y foto. Los IDs numéricos equivalentes se unifican; por ejemplo, `00123` y `123.0` se interpretan como `123`. Los residentes R1–R5 se reconocen como activos. El rol A–D determina el grupo de guardia; una rotación vacía se evalúa como jornada ordinaria.
 
-El 11 de septiembre de 2026 se comprobó la ruta **Excel ficticio → lectura → procesamiento → exportación individual** con Python 3.12.14 y pandas 3.0.5. Se generaron 31 filas correspondientes a enero y un archivo Excel legible. Es una prueba técnica con una persona ficticia; no mide precisión administrativa ni ahorro de tiempo.
+Para un reporte genérico `.xlsx` o `.csv`, usa las columnas `ID`, `Fecha`, `Entrada` y `Salida`. También se admiten matrices ZKTeco y reportes de excepciones `.xls`/`.xlsx`. Si una guardia termina al día siguiente, incluye esa salida en el archivo de origen.
 
-La sintaxis de los nueve archivos Python de la raíz pasó la revisión. No se probaron la interfaz gráfica, todos los formatos de escáner ni el empaquetado.
+## Reglas y métricas
 
-Pendientes: anonimización de archivos de muestra, pruebas de límites de mes y guardias, validación de CSV en la interfaz, unificación de versiones y preparación del empaquetado. `build_exe.py` referencia carpetas `assets/` y `data/` que no están en la copia revisada, por lo que no se presenta como un comando de instalación verificado.
+La evaluación sigue este orden: **incidencia registrada → guardia → postguardia → festivo → descanso → jornada ordinaria**. En festivos y descansos con marcas se evalúa la asistencia; una falta de guardia revoca la postguardia siguiente. Los horarios y tolerancias actuales están en `core.py` y `ingestion.py`; la interfaz no edita reglas ni carga una hoja `1_Reglas_ID`.
 
-## Mi participación
+| Indicador | Definición |
+| --- | --- |
+| Asistencias | `ASISTENCIA + GUARDIA + POST_GUARDIA` |
+| Faltas totales | `FALTA + FALTA_GUARDIA` |
+| Días evaluados | Asistencias + retardos + faltas totales |
+| % asistencia | Asistencias / días evaluados × 100 |
+| % presencia física | (`ASISTENCIA + GUARDIA + RETARDO`) / días evaluados × 100 |
 
-Mi rol fue de desarrollo integral de la aplicación: interfaz, procesamiento de datos y exportación de reportes. Es una aplicación de escritorio dentro de mi portafolio de desarrollo full stack.
+Vacaciones, permisos, festivos y descansos quedan fuera del denominador de desempeño. La gráfica de distribución del calendario sí muestra todos los días, por lo que sus porcentajes tienen otra base.
+
+## Calidad y empaquetado
+
+```powershell
+python -m unittest discover -s tests -v
+python build_exe.py
+```
+
+Las pruebas verifican métricas compartidas, hojas de estadísticas y descansos individuales, genéricos y puntuales frente a las guardias. `build_exe.py` usa PyInstaller y genera `dist/SGAM.exe` en Windows. El ejecutable es un artefacto local: el repositorio contiene el código y las instrucciones para compilarlo.
+
+| Archivo | Responsabilidad |
+| --- | --- |
+| `ingestion.py` | Lectura, validación y normalización |
+| `core.py` | Reglas de asistencia, calendario y métricas |
+| `ui.py` | Interfaz, calendario y análisis visual |
+| `export.py`, `utils.py` | Reportes y estadísticas Excel |
+| `app_info.py`, `main.py` | Versión y arranque |
+| `tests/` | Pruebas de regresión |
+
+## Alcance y datos
+
+SGAM es una herramienta de apoyo administrativo. No hay en este repositorio evidencia de integración en producción, validación clínica, precisión medida sobre datos reales o ahorro de tiempo cuantificado. Las decisiones de asistencia deben verificarse contra las políticas de cada institución.
+
+El repositorio actual incluye una plantilla vacía y un generador de datos ficticios. Mantén fuera de Git los reportes biométricos, padrones llenos y exportaciones; `.gitignore` excluye esos archivos. Si clonas una revisión histórica del repositorio, revisa sus archivos antes de compartirlos: versiones anteriores incluyeron muestras institucionales.

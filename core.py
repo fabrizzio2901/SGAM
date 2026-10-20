@@ -22,6 +22,7 @@ COLOR_MAP = {
     "POST_GUARDIA":  {"hex": "D9E1F2", "label": "Post-Guardia",   "emoji": "🛌"},
     "FALTA_GUARDIA": {"hex": "C00000", "label": "Falta Guardia",  "emoji": "❌"},
     "NO_LABORABLE":  {"hex": "D9D9D9", "label": "No Laborable",   "emoji": "⚪"},
+    "DESCANSO":      {"hex": "C9B6E4", "label": "Descanso",       "emoji": "🟣"},
     "VACACIONES":    {"hex": "70AD47", "label": "Vacaciones",     "emoji": "🟢"},
     "INCAPACIDAD":   {"hex": "FFE699", "label": "Incapacidad",    "emoji": "💛"},
     "PERMISO":       {"hex": "9DC3E6", "label": "Permiso",        "emoji": "🔵"},
@@ -33,6 +34,53 @@ COLOR_MAP = {
 }
 
 UMBRAL_TURNO_NOCTURNO_HORA = 6
+
+# Una sola definición para el panel, las estadísticas y sus exportaciones.
+ESTATUSES_ASISTENCIA = frozenset({"ASISTENCIA", "GUARDIA", "POST_GUARDIA"})
+ESTATUSES_FALTA = frozenset({"FALTA", "FALTA_GUARDIA"})
+ESTATUSES_PUNTUABLES = ESTATUSES_ASISTENCIA | ESTATUSES_FALTA | {"RETARDO"}
+ESTATUSES_LABORABLES = frozenset(COLOR_MAP) - {"DESCANSO", "NO_LABORABLE", "SIN_DATOS"}
+
+
+def calcular_metricas(df: pd.DataFrame) -> dict:
+    """Resume cumplimiento sin penalizar descansos ni ausencias justificadas.
+
+    Asistencias agrupa asistencia ordinaria, guardia y postguardia. Presencia
+    cuenta sólo asistencia ordinaria, guardia y retardo (no postguardia).
+    """
+    c = df["Estatus"].value_counts().to_dict()
+    asistencias = sum(c.get(estado, 0) for estado in ESTATUSES_ASISTENCIA)
+    faltas = sum(c.get(estado, 0) for estado in ESTATUSES_FALTA)
+    retardos = c.get("RETARDO", 0)
+    evaluados = asistencias + faltas + retardos
+
+    def porcentaje(valor):
+        return round(valor / evaluados * 100, 1) if evaluados else 0.0
+
+    return {
+        "total_lab": sum(c.get(estado, 0) for estado in ESTATUSES_LABORABLES),
+        "dias_evaluados": evaluados,
+        "asistencias": asistencias,
+        "asistencias_ordinarias": c.get("ASISTENCIA", 0),
+        "guardias": c.get("GUARDIA", 0),
+        "post_guardias": c.get("POST_GUARDIA", 0),
+        "retardos": retardos,
+        "faltas": faltas,
+        "faltas_ordinarias": c.get("FALTA", 0),
+        "faltas_guardia": c.get("FALTA_GUARDIA", 0),
+        "descansos": c.get("DESCANSO", 0),
+        "vacaciones": c.get("VACACIONES", 0),
+        "incapacidad": c.get("INCAPACIDAD", 0),
+        "permisos": c.get("PERMISO", 0),
+        "comisiones": c.get("COMISION", 0),
+        "rotaciones": c.get("ROTACION", 0),
+        "festivos": c.get("FESTIVO", 0),
+        "otros": c.get("OTRO", 0),
+        "pct_asistencia": porcentaje(asistencias),
+        "pct_retardo": porcentaje(retardos),
+        "pct_falta": porcentaje(faltas),
+        "pct_presencia": porcentaje(c.get("ASISTENCIA", 0) + c.get("GUARDIA", 0) + retardos),
+    }
 
 # ──────────────────────────────────────────────
 # Helpers de guardias cíclicas (Generador A-B-C-D)
@@ -234,12 +282,28 @@ def _evaluar_turno_guardia(marcas_hoy: list[dict], marcas_manana: list[dict], ho
 # ──────────────────────────────────────────────
 # Motor Principal
 # ──────────────────────────────────────────────
+_NOMBRES_DIA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+def _motivo_descanso(id_emp: str, dia: date, descansos: dict) -> Optional[str]:
+    """Devuelve el texto del descanso si 'dia' es descanso para id_emp (hoja 7_Descansos), o None."""
+    if not descansos:
+        return None
+    propio = descansos.get("por_id", {}).get(id_emp, {"dias": set(), "fechas": {}})
+    gen    = descansos.get("generico", {"dias": set(), "fechas": {}})
+    for fuente in (propio, gen):                      # lo individual tiene prioridad
+        if dia in fuente["fechas"]:
+            return fuente["fechas"][dia]
+        if dia.weekday() in fuente["dias"]:
+            return f"Descanso ({_NOMBRES_DIA[dia.weekday()]})"
+    return None
+
 def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
     catalogo     = datos["catalogo"]
     df_rol       = datos.get("rol_guardias", pd.DataFrame())
     df_inc       = datos["incidencias"]
     df_scanner   = datos["scanner"]
     dic_festivos = datos.get("festivos", {})
+    descansos    = datos.get("descansos", {})
 
     tol_retardo = reglas.get("tolerancia_retardo_min", 10)
     tol_falta   = reglas.get("tolerancia_falta_min",   15)
@@ -316,6 +380,7 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
             notas_adicionales = ""
             turno_servicio    = ""
             es_festivo        = dia in dic_festivos
+            motivo_descanso   = _motivo_descanso(id_emp, dia, descansos)
             
             # Determinación de estado de ciclo dinámico vs Exclusión estricta
             if aplica_ciclo_guardias:
@@ -367,6 +432,14 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
                         else:
                             estatus_dia = "FESTIVO"
                             eval_notas = dic_festivos[dia]
+                    elif motivo_descanso:
+                        # El descanso de la hoja 7 tiene estado propio; si hay marca, se evalúa la asistencia.
+                        if marcas_hoy:
+                            estatus_dia, eval_notas = _evaluar_turno_ordinario(marcas_hoy, hora_esp, tol_retardo, tol_falta)
+                            eval_notas = f"Asistencia en {motivo_descanso} | {eval_notas}"
+                        else:
+                            estatus_dia = "DESCANSO"
+                            eval_notas = motivo_descanso
                     else:
                         estatus_dia, eval_notas = _evaluar_turno_ordinario(marcas_hoy, hora_esp, tol_retardo, tol_falta)
 
@@ -419,13 +492,14 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
 # Utilidades de filtrado y resumen
 # ──────────────────────────────────────────────
 def calcular_resumen(df: pd.DataFrame) -> dict:
-    lab     = df[df["Estatus"] != "NO_LABORABLE"]
+    lab     = df[df["Estatus"].isin(ESTATUSES_LABORABLES)]
     conteos = lab["Estatus"].value_counts().to_dict()
     total   = len(lab)
     return {
         "conteos":               conteos,
         "porcentajes":           {k: round(v/total*100, 1) if total else 0 for k, v in conteos.items()},
         "total_dias_laborables": total,
+        "metricas":              calcular_metricas(df),
         "empleados":             df["ID"].nunique(),
         "mes":                   df["Fecha"].dt.to_period("M").iloc[0] if len(df) else None,
     }

@@ -21,7 +21,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image as XLImage
 
-from core import COLOR_MAP
+from core import COLOR_MAP, calcular_metricas
 
 
 # ──────────────────────────────────────────────
@@ -77,6 +77,7 @@ ABREV_MAP = {
     "Retardo":       "Re",
     "Falta":         "Fa",
     "No Laborable":  "NL",
+    "Descanso":      "De",
     "Vacaciones":    "Va",
     "Festivo":       "Fe",
     "Incapacidad":   "In",
@@ -247,7 +248,7 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
     
     # Leyenda actualizada con Guardias y Emojis core
     leyenda_txt = ("LEYENDA: 🟡 Asis  🟠 Ret  🔴 Falta  🏥 Gua  🛌 Post-Gua  ❌ Falta Gua  "
-                   "⚪ No Lab  🟢 Vac  💛 Incap  🔵 Perm  🎉 Festivo")
+                   "⚪ No Lab  🟣 Desc  🟢 Vac  💛 Incap  🔵 Perm  🎉 Festivo")
     c_ley = ws.cell(row=fila_ley, column=1, value=leyenda_txt)
     c_ley.font = _font(size=8, italic=True, color="404040")
     c_ley.alignment = ALIN_L
@@ -504,19 +505,15 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
 
     # Diccionario de Leyenda con los colores sincronizados estrictamente con core.py
     LEYENDA_ITEMS = [
-        ("As", "Asistencia",    "FFD966"),
-        ("Re", "Retardo",       "FF8C00"),
-        ("Fa", "Falta",         "FF4B4B"),
-        ("Gu", "Guardia",       "8EA9DB"),
-        ("PG", "Post-Guardia",  "D9E1F2"),
-        ("FG", "Falta Guardia", "C00000"),
-        ("NL", "No Laborable",  "D9D9D9"),
-        ("Va", "Vacaciones",    "70AD47"),
-        ("Fe", "Festivo",       "ADD8E6"),
-        ("In", "Incapacidad",   "FFE699"),
-        ("Pe", "Permiso",       "9DC3E6"),
-        ("Co", "Comisión",      "F4B942"),
-        ("Ro", "Rotación",      "FFB6C1"),
+        (abrev, COLOR_MAP[estatus]["label"], COLOR_MAP[estatus]["hex"])
+        for abrev, estatus in [
+            ("As", "ASISTENCIA"), ("Re", "RETARDO"), ("Fa", "FALTA"),
+            ("Gu", "GUARDIA"), ("PG", "POST_GUARDIA"),
+            ("FG", "FALTA_GUARDIA"), ("NL", "NO_LABORABLE"),
+            ("De", "DESCANSO"), ("Va", "VACACIONES"), ("Fe", "FESTIVO"),
+            ("In", "INCAPACIDAD"), ("Pe", "PERMISO"),
+            ("Co", "COMISION"), ("Ro", "ROTACION"),
+        ]
     ]
 
     fila_ley = FILA_HEADER + total + 2
@@ -567,13 +564,13 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
     c.fill      = _fill("EBF3FB")
     c.alignment = ALIN_L
 
-    lab = df[df["Estatus"] != "NO_LABORABLE"]
-    total_dias = len(lab)
+    total_dias = len(df)
+    metricas = calcular_metricas(df)
     n_emp      = df["ID"].nunique()
 
     ws.row_dimensions[2].height = 14
     ws.cell(row=2, column=1,
-             value=f"Total empleados: {n_emp}   |   Total días laborables evaluados: {total_dias}")
+             value=f"Total empleados: {n_emp}   |   Días puntuables: {metricas['dias_evaluados']}   |   Días de descanso: {metricas['descansos']}")
     ws.cell(row=2, column=1).font = _font(size=9, italic=True, color="595959")
 
     FILA_H = 4
@@ -588,18 +585,20 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
         ws.column_dimensions[get_column_letter(j)].width = w
 
     from core import COLOR_MAP
-    conteos = lab["Estatus"].value_counts().to_dict()
+    conteos = df["Estatus"].value_counts().to_dict()
     
     # Orden de estatus actualizado para incluir métricas de las Guardias
     orden = ["ASISTENCIA", "RETARDO", "FALTA", 
              "GUARDIA", "POST_GUARDIA", "FALTA_GUARDIA",
              "VACACIONES", "FESTIVO", "INCAPACIDAD", 
-             "PERMISO", "COMISION", "ROTACION", "OTRO"]
+             "PERMISO", "COMISION", "ROTACION", "OTRO",
+             "DESCANSO", "NO_LABORABLE"]
 
-    for idx, est in enumerate(orden):
+    filas_escritas = 0
+    for est in orden:
         if est not in conteos:
             continue
-        fila = FILA_H + 1 + idx
+        fila = FILA_H + 1 + filas_escritas
         ws.row_dimensions[fila].height = 15
         cnt  = conteos[est]
         pct  = round(cnt / total_dias * 100, 1) if total_dias > 0 else 0.0
@@ -611,7 +610,7 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
             c.font      = _font(size=9)
             c.alignment = ALIN_C
             c.border    = BORDER
-            if idx % 2 == 0:
+            if filas_escritas % 2 == 0:
                 c.fill = _fill("F2F7FC")
 
         c_col = ws.cell(row=fila, column=4, value=info["label"])
@@ -620,10 +619,12 @@ def _construir_hoja_resumen_general(ws, df: pd.DataFrame,
         c_col.alignment = ALIN_C
         c_col.border    = BORDER
 
-    fila_tot = FILA_H + len(conteos) + 2
+        filas_escritas += 1
+
+    fila_tot = FILA_H + filas_escritas + 2
     ws.row_dimensions[fila_tot].height = 15
     ws.merge_cells(f"A{fila_tot}:B{fila_tot}")
-    c = ws.cell(row=fila_tot, column=1, value="TOTAL DÍAS EVALUADOS")
+    c = ws.cell(row=fila_tot, column=1, value="TOTAL DÍAS DEL MES")
     c.font = _font(bold=True, size=9, color="1F3864")
     c.fill = _fill("DEEAF1"); c.alignment = ALIN_L; c.border = BORDER
     c2 = ws.cell(row=fila_tot, column=3, value="100%")

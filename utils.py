@@ -25,15 +25,12 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+from core import calcular_metricas, ESTATUSES_FALTA
+
 
 # ──────────────────────────────────────────────
 # Constantes internas
 # ──────────────────────────────────────────────
-# [MEJORA] Se incluye FESTIVO en los estatus laborables y evaluables para cruces.
-ESTATUSES_LABORABLES = {"ASISTENCIA", "RETARDO", "FALTA", "VACACIONES",
-                         "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION", "FESTIVO", "OTRO"}
-ESTATUSES_PRESENCIA  = {"ASISTENCIA", "RETARDO"}   # físicamente en el hospital
-
 MESES_ES = {
     1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo",
     6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre",
@@ -49,35 +46,8 @@ def _safe_pct(numerador: int, denominador: int) -> float:
 
 
 def _conteos_empleado(df_emp: pd.DataFrame) -> dict:
-    """Cuenta estatus para un DataFrame de un solo empleado."""
-    lab = df_emp[df_emp["Estatus"].isin(ESTATUSES_LABORABLES)]
-    c   = lab["Estatus"].value_counts().to_dict()
-    total_lab = len(lab)
-    
-    # [MEJORA: REQUERIMIENTO 4] Días puramente evaluables para sacar un porcentaje justo.
-    asistencias = c.get("ASISTENCIA", 0)
-    retardos    = c.get("RETARDO", 0)
-    faltas      = c.get("FALTA", 0)
-    dias_evaluados = asistencias + retardos + faltas
-    
-    return {
-        "total_lab":    total_lab,
-        "dias_evaluados": dias_evaluados,
-        "asistencias":  asistencias,
-        "retardos":     retardos,
-        "faltas":       faltas,
-        "vacaciones":   c.get("VACACIONES",  0),
-        "incapacidad":  c.get("INCAPACIDAD", 0),
-        "permisos":     c.get("PERMISO",     0),
-        "comisiones":   c.get("COMISION",    0),
-        "rotaciones":   c.get("ROTACION",    0),
-        "festivos":     c.get("FESTIVO",     0),
-        "otros":        c.get("OTRO",        0),
-        "pct_asistencia": _safe_pct(asistencias, dias_evaluados),
-        "pct_retardo":    _safe_pct(retardos, dias_evaluados),
-        "pct_falta":      _safe_pct(faltas, dias_evaluados),
-        "pct_presencia":  _safe_pct(asistencias + retardos, dias_evaluados),
-    }
+    """Usa la misma definición de cumplimiento que el panel principal."""
+    return calcular_metricas(df_emp)
 
 
 # ──────────────────────────────────────────────
@@ -131,28 +101,24 @@ def resumen_por_tipo(df: pd.DataFrame) -> pd.DataFrame:
     """
     Agrega métricas por Tipo de personal (Interno, Residente, Médico Adscrito).
     """
-    lab = df[df["Estatus"].isin(ESTATUSES_LABORABLES)]
     grupos = []
-    for tipo, grp in lab.groupby("Tipo"):
-        c = grp["Estatus"].value_counts().to_dict()
-        asist = c.get("ASISTENCIA", 0)
-        ret = c.get("RETARDO", 0)
-        fal = c.get("FALTA", 0)
-        evaluados = asist + ret + fal
+    for tipo, grp in df.groupby("Tipo"):
+        m = calcular_metricas(grp)
         
         grupos.append({
             "Tipo":             tipo,
             "Empleados":        grp["ID"].nunique(),
-            "Días Lab Totales": len(grp),
-            "Días Evaluados":   evaluados,
-            "Asistencias":      asist,
-            "Retardos":         ret,
-            "Faltas":           fal,
-            "Incapacidades":    c.get("INCAPACIDAD",0),
-            "Vacaciones":       c.get("VACACIONES", 0),
-            "Festivos":         c.get("FESTIVO", 0),
-            "% Asistencia":     _safe_pct(asist, evaluados),
-            "% Falta":          _safe_pct(fal, evaluados),
+            "Días Lab Totales": m["total_lab"],
+            "Días Evaluados":   m["dias_evaluados"],
+            "Asistencias":      m["asistencias"],
+            "Retardos":         m["retardos"],
+            "Faltas":           m["faltas"],
+            "Descansos":        m["descansos"],
+            "Incapacidades":    m["incapacidad"],
+            "Vacaciones":       m["vacaciones"],
+            "Festivos":         m["festivos"],
+            "% Asistencia":     m["pct_asistencia"],
+            "% Falta":          m["pct_falta"],
         })
     return pd.DataFrame(grupos)
 
@@ -161,29 +127,27 @@ def resumen_por_especialidad(df: pd.DataFrame) -> pd.DataFrame:
     """
     Agrega métricas por Especialidad (excluyendo Internos que no tienen especialidad).
     """
-    lab = df[
-        df["Estatus"].isin(ESTATUSES_LABORABLES) &
-        df["Especialidad"].str.strip().ne("")
-    ]
+    especialidades = df["Especialidad"].fillna("").astype(str).str.strip()
+    lab = df[~especialidades.str.lower().isin({"", "n/a", "nan", "no aplica"})]
     grupos = []
     for esp, grp in lab.groupby("Especialidad"):
-        c = grp["Estatus"].value_counts().to_dict()
-        asist = c.get("ASISTENCIA", 0)
-        ret = c.get("RETARDO", 0)
-        fal = c.get("FALTA", 0)
-        evaluados = asist + ret + fal
+        m = calcular_metricas(grp)
         
         grupos.append({
             "Especialidad":   esp,
             "Empleados":      grp["ID"].nunique(),
-            "Días Evaluados": evaluados,
-            "Asistencias":    asist,
-            "Retardos":       ret,
-            "Faltas":         fal,
-            "% Asistencia":   _safe_pct(asist, evaluados),
-            "% Falta":        _safe_pct(fal, evaluados),
+            "Días Evaluados": m["dias_evaluados"],
+            "Asistencias":    m["asistencias"],
+            "Retardos":       m["retardos"],
+            "Faltas":         m["faltas"],
+            "Descansos":      m["descansos"],
+            "% Asistencia":   m["pct_asistencia"],
+            "% Falta":        m["pct_falta"],
         })
-    return pd.DataFrame(grupos).sort_values("% Falta", ascending=False)
+    return pd.DataFrame(grupos, columns=[
+        "Especialidad", "Empleados", "Días Evaluados", "Asistencias",
+        "Retardos", "Faltas", "Descansos", "% Asistencia", "% Falta",
+    ]).sort_values("% Falta", ascending=False).reset_index(drop=True)
 
 
 # ──────────────────────────────────────────────
@@ -193,7 +157,8 @@ def dias_criticos(df: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
     DIAS_ES = ["Lunes", "Martes", "Miércoles", "Jueves",
                "Viernes", "Sábado", "Domingo"]
 
-    lab = df[df["Estatus"].isin({"FALTA", "RETARDO"})].copy()
+    lab = df[df["Estatus"].isin(ESTATUSES_FALTA | {"RETARDO"})].copy()
+    lab["Estatus"] = lab["Estatus"].replace({"FALTA_GUARDIA": "FALTA"})
     lab["Fecha_dt"] = pd.to_datetime(lab["Fecha"])
 
     agg = (
@@ -226,31 +191,28 @@ def dias_criticos(df: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
 
 
 def calcular_tendencia_semanal(df: pd.DataFrame) -> pd.DataFrame:
-    lab = df[df["Estatus"].isin(ESTATUSES_LABORABLES)].copy()
+    lab = df.copy()
     lab["Fecha_dt"] = pd.to_datetime(lab["Fecha"])
-    lab["Semana"]   = lab["Fecha_dt"].dt.isocalendar().week.astype(int)
-
-    semana_min = lab["Semana"].min()
-    lab["Semana"] = lab["Semana"] - semana_min + 1
+    lab["Semana"] = lab["Fecha_dt"].dt.to_period("W-SUN")
 
     filas = []
-    for sem, grp in lab.groupby("Semana"):
-        c = grp["Estatus"].value_counts().to_dict()
-        asist = c.get("ASISTENCIA", 0)
-        ret = c.get("RETARDO", 0)
-        fal = c.get("FALTA", 0)
-        evaluados = asist + ret + fal
+    for numero, (_, grp) in enumerate(lab.groupby("Semana", sort=True), start=1):
+        m = calcular_metricas(grp)
         
         filas.append({
-            "Semana":          f"Semana {int(sem)}",
-            "Asistencias":     asist,
-            "Retardos":        ret,
-            "Faltas":          fal,
-            "Días Evaluados":  evaluados,
-            "Pct_Asistencia":  _safe_pct(asist, evaluados),
+            "Semana":          f"Semana {numero}",
+            "Asistencias":     m["asistencias"],
+            "Retardos":        m["retardos"],
+            "Faltas":          m["faltas"],
+            "Descansos":       m["descansos"],
+            "Días Evaluados":  m["dias_evaluados"],
+            "Pct_Asistencia":  m["pct_asistencia"],
         })
 
-    return pd.DataFrame(filas)
+    return pd.DataFrame(filas, columns=[
+        "Semana", "Asistencias", "Retardos", "Faltas", "Descansos",
+        "Días Evaluados", "Pct_Asistencia",
+    ])
 
 
 # ──────────────────────────────────────────────
@@ -285,7 +247,8 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
                       top=Side(style="thin"),  bottom=Side(style="thin"))
 
     def _hdr(ws, fila, valores, anchos):
-        for j, (val, ancho) in enumerate(zip(valores, anchos), start=1):
+        for j, val in enumerate(valores, start=1):
+            ancho = anchos[j - 1] if j <= len(anchos) else 14
             c = ws.cell(row=fila, column=j, value=val)
             c.font = FNT_H; c.fill = FILL_H; c.alignment = ALIN_C; c.border = BRD
             ws.column_dimensions[get_column_letter(j)].width = ancho
@@ -318,10 +281,10 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
 
     df_ind = estadisticas_por_empleado(df)
     cols_h = ["#", "Nombre", "Tipo", "Especialidad", "Grado", "Periodo",
-              "Días Eval.", "Asist.", "Retardos", "Faltas", "Vacac.",
+              "Días Eval.", "Asist./G./PG", "Guardias", "Post-G.", "Retardos", "Faltas totales", "Falta G.", "Descansos", "Vacac.",
               "Incap.", "Permisos", "Festivos", "Rotac.",
               "% Asist.", "% Retardo", "% Falta", "% Presencia"]
-    anchos = [4, 28, 14, 16, 6, 7, 8, 7, 7, 7, 7, 7, 7, 8, 7, 9, 9, 9, 10]
+    anchos = [4, 28, 14, 16, 6, 7, 10, 14, 10, 10, 10, 14, 10, 10, 8, 8, 10, 10, 8, 10, 10, 10, 12]
 
     _hdr(ws1, 2, cols_h, anchos)
 
@@ -333,8 +296,11 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
             row["Nombre_Completo"],   row["Tipo"],
             row["Especialidad"],      row["Grado"],
             row["Periodo_Ingreso"],   row["dias_evaluados"],
-            row["asistencias"],       row["retardos"],
-            row["faltas"],            row["vacaciones"],
+            row["asistencias"],       row["guardias"],
+            row["post_guardias"],     row["retardos"],
+            row["faltas"],            row["faltas_guardia"],
+            row["descansos"],
+            row["vacaciones"],
             row["incapacidad"],       row["permisos"],
             row["festivos"],          row["rotaciones"],
             row["pct_asistencia"],    row["pct_retardo"],
