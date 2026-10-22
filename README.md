@@ -104,7 +104,7 @@ python -m unittest discover -s tests -v
 python build_exe.py
 ```
 
-Las pruebas verifican métricas compartidas, hojas de estadísticas y descansos individuales, genéricos y puntuales frente a las guardias. `build_exe.py` usa PyInstaller y genera `dist/SGAM.exe` en Windows. El ejecutable es un artefacto local: el repositorio contiene el código y las instrucciones para compilarlo.
+Las pruebas verifican métricas compartidas, hojas de estadísticas, colores de la leyenda y descansos individuales, genéricos y puntuales frente a las guardias. `build_exe.py` usa PyInstaller y genera `dist/SGAM.exe` en Windows; si existe el alias heredado `dist/SGAM_actualizado.exe`, lo actualiza con la misma compilación. El ejecutable es un artefacto local: el repositorio contiene el código y las instrucciones para compilarlo.
 
 | Archivo | Responsabilidad |
 | --- | --- |

@@ -4,6 +4,7 @@ Uso: python build_exe.py [--clean]
 """
 
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,7 +39,12 @@ def build():
     if result.returncode:
         print("La compilación falló. Revisa los mensajes de PyInstaller.")
         sys.exit(result.returncode)
-    print(f"Ejecutable generado en: {BASE_DIR / 'dist' / 'SGAM.exe'}")
+    ejecutable = BASE_DIR / "dist" / "SGAM.exe"
+    alias_anterior = BASE_DIR / "dist" / "SGAM_actualizado.exe"
+    if alias_anterior.exists():
+        shutil.copy2(ejecutable, alias_anterior)
+        print(f"Alias existente actualizado: {alias_anterior}")
+    print(f"Ejecutable generado en: {ejecutable}")
 
 
 if __name__ == "__main__":

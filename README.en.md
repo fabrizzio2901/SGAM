@@ -97,7 +97,7 @@ python -m unittest discover -s tests -v
 python build_exe.py
 ```
 
-The tests cover shared metrics, statistics worksheets and individual, recurring and one-off rest days against duty precedence. `build_exe.py` uses PyInstaller to create `dist/SGAM.exe` on Windows. The executable is a local build artifact; this repository provides source code and build instructions.
+The tests cover shared metrics, statistics worksheets, legend colors and individual, recurring and one-off rest days against duty precedence. `build_exe.py` uses PyInstaller to create `dist/SGAM.exe` on Windows; if the legacy `dist/SGAM_actualizado.exe` alias exists, it updates it with the same build. The executable is a local build artifact; this repository provides source code and build instructions.
 
 | File | Responsibility |
 | --- | --- |
