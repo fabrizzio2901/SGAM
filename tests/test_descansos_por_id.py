@@ -10,7 +10,7 @@ import pandas as pd
 import openpyxl
 
 from core import COLOR_MAP, calcular_metricas, procesar_asistencias
-from export import exportar_maestro_consolidado, exportar_reporte_empleado
+from export import ABREV_MAP, LEYENDA_ESTADOS, exportar_maestro_consolidado, exportar_reporte_empleado
 from ingestion import cargar_plantilla, extraer_reglas
 from utils import exportar_estadisticas_excel
 
@@ -150,17 +150,21 @@ class DescansosPorIdTests(unittest.TestCase):
                 self.assertEqual(hoja_ind.cell(16, 6).value, "Fe")  # domingo 5
                 self.assertEqual(hoja_ind.cell(16, 5).fill.fgColor.rgb, "FFD9D9D9")
                 self.assertEqual(hoja_ind.cell(16, 6).fill.fgColor.rgb, "FFADD8E6")
-                colores_ind = {
-                    cell.value: cell.fill.fgColor.rgb
-                    for row in hoja_ind.iter_rows(min_row=19, max_row=20) for cell in row
-                    if cell.value in ("NL", "Fe")
-                }
-                self.assertEqual(colores_ind, {"NL": "FFD9D9D9", "Fe": "FFADD8E6"})
-                self.assertTrue(all(
-                    cell.fill.patternType == "solid"
-                    for row in hoja_ind.iter_rows(min_row=19, max_row=20) for cell in row
-                    if cell.value in ("As", "Re", "Fa", "Gu", "PG", "FG", "NL", "De", "Va", "Fe", "In", "Pe", "Co", "Ro")
-                ))
+                self.assertEqual(hoja_ind.cell(18, 1).value, "LEYENDA DE ESTADOS")
+                for idx, estado in enumerate(LEYENDA_ESTADOS):
+                    fila = 19 + idx % 7
+                    inicio = 2 if idx < 7 else 16
+                    etiqueta = 5 if idx < 7 else 19
+                    info = COLOR_MAP[estado]
+                    self.assertEqual(hoja_ind.cell(fila, inicio + 1).value,
+                                     ABREV_MAP[info["label"]])
+                    self.assertEqual(hoja_ind.cell(fila, etiqueta).value, info["label"])
+                    for col in range(inicio, inicio + 3):
+                        muestra = hoja_ind.cell(fila, col)
+                        self.assertEqual(muestra.fill.patternType, "solid")
+                        self.assertEqual(muestra.fill.fgColor.rgb, f'FF{info["hex"]}')
+                self.assertEqual(hoja_ind.cell(25, 3).value, "NL")
+                self.assertEqual(hoja_ind.cell(21, 17).value, "Fe")
 
                 hoja_maestra = maestro.worksheets[0]
                 self.assertEqual(hoja_maestra.column_dimensions["B"].width, 28)

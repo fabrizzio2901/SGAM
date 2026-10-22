@@ -265,25 +265,36 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
     c_ley.font = FONT_H_NAVY
     c_ley.alignment = ALIN_L
 
-    # Las celdas rellenas conservan el color en Excel sin depender de emojis.
+    # Dos columnas de muestras amplias; cada celda de la muestra tiene relleno
+    # propio para que el color siga visible incluso en visores que no pintan
+    # correctamente las celdas combinadas o los símbolos Unicode.
     for idx, estatus in enumerate(LEYENDA_ESTADOS):
-        fila = fila_ley + 1 + idx // 7
-        col = 1 + (idx % 7) * 4
+        fila = fila_ley + 1 + idx % 7
+        col_muestra = 2 if idx < 7 else 16
+        col_etiqueta = 5 if idx < 7 else 19
+        col_etiqueta_fin = 14 if idx < 7 else 29
         info = COLOR_MAP[estatus]
         abrev = ABREV_MAP[info["label"]]
-        c_color = ws.cell(row=fila, column=col, value=abrev)
-        c_color.fill = _fill(info["hex"])
-        c_color.font = _font(size=7, bold=True, color="1F1F1F")
-        c_color.alignment = ALIN_C
-        c_color.border = BORDER
-        ws.merge_cells(start_row=fila, start_column=col + 1,
-                       end_row=fila, end_column=col + 3)
-        c_lbl = ws.cell(row=fila, column=col + 1, value=info["label"])
-        c_lbl.font = _font(size=7, color="404040")
+        for col in range(col_muestra, col_muestra + 3):
+            c_color = ws.cell(row=fila, column=col,
+                              value=abrev if col == col_muestra + 1 else None)
+            c_color.fill = _fill(info["hex"])
+            c_color.font = _font(size=9, bold=True, color="1F1F1F")
+            c_color.alignment = ALIN_C
+            c_color.border = Border(
+                top=Side(style="thin", color="7F8C8D"),
+                bottom=Side(style="thin", color="7F8C8D"),
+                left=Side(style="thin", color="7F8C8D") if col == col_muestra else Side(),
+                right=Side(style="thin", color="7F8C8D") if col == col_muestra + 2 else Side(),
+            )
+        ws.merge_cells(start_row=fila, start_column=col_etiqueta,
+                       end_row=fila, end_column=col_etiqueta_fin)
+        c_lbl = ws.cell(row=fila, column=col_etiqueta, value=info["label"])
+        c_lbl.font = _font(size=9, color="1F1F1F")
         c_lbl.alignment = ALIN_L
-        ws.row_dimensions[fila].height = 18
+        ws.row_dimensions[fila].height = 22
 
-    return fila_ley + 4
+    return fila_ley + 9
 
 
 def _seccion_firma(ws, fila_ini: int, dias_mes: int):

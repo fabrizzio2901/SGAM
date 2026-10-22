@@ -2,7 +2,7 @@
 
 **De registros biométricos a un calendario de asistencia auditable.** SGAM es una aplicación de escritorio para Windows que cruza el padrón de internos y residentes, los roles de guardia y las incidencias con reportes de entrada y salida. Normaliza archivos heterogéneos, evalúa cada día con reglas explícitas y entrega vistas y reportes Excel para revisión administrativa.
 
-**Versión 2.3.5** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
+**Versión 2.3.6** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
 
 **Autores:** Alan Jiménez y Fabrizzio Ramírez · [English documentation](README.en.md)
 
@@ -95,7 +95,7 @@ La evaluación sigue este orden: **incidencia registrada (incluida rotación) �
 | % asistencia | Asistencias / días evaluados × 100 |
 | % presencia física | (`ASISTENCIA + GUARDIA + RETARDO`) / días evaluados × 100 |
 
-Vacaciones, permisos, festivos, descansos y días no laborables quedan fuera del denominador de desempeño. En Excel, **NL** (No laborable) y **Fe** (Festivo) tienen celdas y recuentos separados; la leyenda usa rellenos de celda para mostrar sus colores. La gráfica de distribución del calendario sí muestra todos los días, por lo que sus porcentajes tienen otra base.
+Vacaciones, permisos, festivos, descansos y días no laborables quedan fuera del denominador de desempeño. En Excel, **NL** (No laborable) y **Fe** (Festivo) tienen celdas y recuentos separados; la leyenda individual muestra recuadros amplios del color correspondiente junto al código y nombre de cada estado. La gráfica de distribución del calendario sí muestra todos los días, por lo que sus porcentajes tienen otra base.
 
 ## Calidad y empaquetado
 

@@ -2,7 +2,7 @@
 
 **From biometric records to an auditable attendance calendar.** SGAM is a Windows desktop application that reconciles intern and resident rosters, duty schedules and recorded absences with check-in/check-out reports. It normalizes heterogeneous files, applies explicit daily rules and produces views and Excel reports for administrative review.
 
-**Version 2.3.5** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
+**Version 2.3.6** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
 
 **Authors:** Alan Jiménez and Fabrizzio Ramírez · [Documentación en español](README.md)
 
@@ -88,7 +88,7 @@ The evaluation order is **recorded absence (including rotation) → duty → pos
 | Attendance rate | Attendance / evaluated days × 100 |
 | Physical presence rate | (`ASISTENCIA + GUARDIA + RETARDO`) / evaluated days × 100 |
 
-Vacations, leave, holidays, rest days and non-working days are excluded from the performance denominator. In Excel, **NL** (Non-working) and **Fe** (Holiday) have separate cells and counts; the legend uses filled cells to display their colors. The calendar distribution chart includes all days and therefore uses a different denominator.
+Vacations, leave, holidays, rest days and non-working days are excluded from the performance denominator. In Excel, **NL** (Non-working) and **Fe** (Holiday) have separate cells and counts; the individual legend shows a wide color swatch next to each status code and name. The calendar distribution chart includes all days and therefore uses a different denominator.
 
 ## Verification and packaging
 
