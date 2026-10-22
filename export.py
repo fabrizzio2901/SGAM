@@ -31,7 +31,10 @@ def _font(bold=False, size=9, color="000000", italic=False):
     return Font(name="Calibri", bold=bold, size=size, color=color, italic=italic)
 
 def _fill(hex_color: str):
-    return PatternFill("solid", fgColor=hex_color)
+    color = hex_color.lstrip("#").upper()
+    if len(color) == 6:
+        color = f"FF{color}"  # ARGB opaco para que Excel conserve el relleno.
+    return PatternFill(fill_type="solid", fgColor=color)
 
 def _border(style="thin"):
     s = Side(style=style)
@@ -85,6 +88,20 @@ ABREV_MAP = {
     "Comisión":      "Co",
     "Rotación":      "Ro"
 }
+
+LEYENDA_ESTADOS = (
+    "ASISTENCIA", "RETARDO", "FALTA", "GUARDIA", "POST_GUARDIA",
+    "FALTA_GUARDIA", "NO_LABORABLE", "DESCANSO", "VACACIONES",
+    "FESTIVO", "INCAPACIDAD", "PERMISO", "COMISION", "ROTACION",
+)
+
+
+def _estado_excel(row: pd.Series) -> tuple[str, str]:
+    """Obtiene abreviatura y color del mismo estado usado por el motor."""
+    info = COLOR_MAP.get(row.get("Estatus"))
+    label = info["label"] if info else str(row.get("Label", "") or "")
+    color = info["hex"] if info else str(row.get("Color_Hex", "FFFFFF") or "FFFFFF")
+    return ABREV_MAP.get(label, label[:2]), color
 
 
 # ──────────────────────────────────────────────
@@ -218,13 +235,11 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
     mapa_dia = {}
     for _, row in df_emp.iterrows():
         d = pd.to_datetime(row["Fecha"]).day
-        label_full = row.get("Label", "")
-        # Usar mapeo o máximo 3 letras como respaldo
-        abrev = ABREV_MAP.get(label_full, (label_full or "")[:3])
+        abrev, color = _estado_excel(row)
         
         mapa_dia[d] = {
             "label_abrev": abrev,
-            "color": row.get("Color_Hex", "FFFFFF"),
+            "color": color,
             "notas": row.get("Notas", ""),
         }
 
@@ -246,13 +261,29 @@ def _calendario_individual(ws, df_emp: pd.DataFrame,
         end_row=fila_ley,   end_column=dias_mes + 1
     )
     
-    # Leyenda actualizada con Guardias y Emojis core
-    leyenda_txt = ("LEYENDA: 🟡 Asis  🟠 Ret  🔴 Falta  🏥 Gua  🛌 Post-Gua  ❌ Falta Gua  "
-                   "⚪ No Lab  🟣 Desc  🟢 Vac  💛 Incap  🔵 Perm  🎉 Festivo")
-    c_ley = ws.cell(row=fila_ley, column=1, value=leyenda_txt)
-    c_ley.font = _font(size=8, italic=True, color="404040")
+    c_ley = ws.cell(row=fila_ley, column=1, value="LEYENDA DE ESTADOS")
+    c_ley.font = FONT_H_NAVY
     c_ley.alignment = ALIN_L
-    return fila_ley + 2
+
+    # Las celdas rellenas conservan el color en Excel sin depender de emojis.
+    for idx, estatus in enumerate(LEYENDA_ESTADOS):
+        fila = fila_ley + 1 + idx // 7
+        col = 1 + (idx % 7) * 4
+        info = COLOR_MAP[estatus]
+        abrev = ABREV_MAP[info["label"]]
+        c_color = ws.cell(row=fila, column=col, value=abrev)
+        c_color.fill = _fill(info["hex"])
+        c_color.font = _font(size=7, bold=True, color="1F1F1F")
+        c_color.alignment = ALIN_C
+        c_color.border = BORDER
+        ws.merge_cells(start_row=fila, start_column=col + 1,
+                       end_row=fila, end_column=col + 3)
+        c_lbl = ws.cell(row=fila, column=col + 1, value=info["label"])
+        c_lbl.font = _font(size=7, color="404040")
+        c_lbl.alignment = ALIN_L
+        ws.row_dimensions[fila].height = 18
+
+    return fila_ley + 4
 
 
 def _seccion_firma(ws, fila_ini: int, dias_mes: int):
@@ -477,11 +508,10 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         ]
         for _, row in df_mes_emp.iterrows():
             d_num = pd.to_datetime(row["Fecha"]).day
-            label_full = row.get("Label", "")
-            abrev = ABREV_MAP.get(label_full, (label_full or "")[:2])
+            abrev, color = _estado_excel(row)
             
             mapa_dia[d_num] = {
-                "color": row.get("Color_Hex", "FFFFFF"),
+                "color": color,
                 "label": abrev,
                 "notas": row.get("Notas", ""),
             }
@@ -503,42 +533,27 @@ def exportar_maestro_consolidado(df_resultado: pd.DataFrame,
         if callback:
             callback(progreso=num_idx / total, nombre=nombre)
 
-    # Diccionario de Leyenda con los colores sincronizados estrictamente con core.py
-    LEYENDA_ITEMS = [
-        (abrev, COLOR_MAP[estatus]["label"], COLOR_MAP[estatus]["hex"])
-        for abrev, estatus in [
-            ("As", "ASISTENCIA"), ("Re", "RETARDO"), ("Fa", "FALTA"),
-            ("Gu", "GUARDIA"), ("PG", "POST_GUARDIA"),
-            ("FG", "FALTA_GUARDIA"), ("NL", "NO_LABORABLE"),
-            ("De", "DESCANSO"), ("Va", "VACACIONES"), ("Fe", "FESTIVO"),
-            ("In", "INCAPACIDAD"), ("Pe", "PERMISO"),
-            ("Co", "COMISION"), ("Ro", "ROTACION"),
-        ]
-    ]
-
     fila_ley = FILA_HEADER + total + 2
     ws.row_dimensions[fila_ley].height = 16
 
-    c_title = ws.cell(row=fila_ley, column=1, value="LEYENDA:")
+    c_title = ws.cell(row=fila_ley, column=2, value="LEYENDA:")
     c_title.font = _font(bold=True, size=8, color="1F3864")
-    c_title.alignment = ALIN_C
+    c_title.alignment = ALIN_L
 
-    col_ley = 2
-    for abrev, etiqueta, hex_color in LEYENDA_ITEMS:
-        c_color = ws.cell(row=fila_ley, column=col_ley, value=abrev)
-        c_color.fill      = _fill(hex_color)
+    for idx, estatus in enumerate(LEYENDA_ESTADOS, start=1):
+        fila = fila_ley + idx
+        info = COLOR_MAP[estatus]
+        abrev = ABREV_MAP[info["label"]]
+        c_color = ws.cell(row=fila, column=1, value=abrev)
+        c_color.fill      = _fill(info["hex"])
         c_color.font      = _font(bold=True, size=7, color="1F1F1F")
         c_color.alignment = ALIN_C
         c_color.border    = BORDER
-        ws.column_dimensions[get_column_letter(col_ley)].width = 3.5
-        col_ley += 1
 
-        c_lbl = ws.cell(row=fila_ley, column=col_ley, value=etiqueta)
+        c_lbl = ws.cell(row=fila, column=2, value=info["label"])
         c_lbl.font      = _font(size=8, color="404040")
         c_lbl.alignment = ALIN_L
-        c_lbl.fill      = _fill("F5F5F5")
-        ws.column_dimensions[get_column_letter(col_ley)].width = 9
-        col_ley += 1
+        c_lbl.border    = BORDER
 
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToPage   = True

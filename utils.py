@@ -114,6 +114,7 @@ def resumen_por_tipo(df: pd.DataFrame) -> pd.DataFrame:
             "Retardos":         m["retardos"],
             "Faltas":           m["faltas"],
             "Descansos":        m["descansos"],
+            "No laborables":   m["no_laborables"],
             "Incapacidades":    m["incapacidad"],
             "Vacaciones":       m["vacaciones"],
             "Festivos":         m["festivos"],
@@ -141,12 +142,13 @@ def resumen_por_especialidad(df: pd.DataFrame) -> pd.DataFrame:
             "Retardos":       m["retardos"],
             "Faltas":         m["faltas"],
             "Descansos":      m["descansos"],
+            "No laborables": m["no_laborables"],
             "% Asistencia":   m["pct_asistencia"],
             "% Falta":        m["pct_falta"],
         })
     return pd.DataFrame(grupos, columns=[
         "Especialidad", "Empleados", "Días Evaluados", "Asistencias",
-        "Retardos", "Faltas", "Descansos", "% Asistencia", "% Falta",
+        "Retardos", "Faltas", "Descansos", "No laborables", "% Asistencia", "% Falta",
     ]).sort_values("% Falta", ascending=False).reset_index(drop=True)
 
 
@@ -205,12 +207,13 @@ def calcular_tendencia_semanal(df: pd.DataFrame) -> pd.DataFrame:
             "Retardos":        m["retardos"],
             "Faltas":          m["faltas"],
             "Descansos":       m["descansos"],
+            "No laborables":  m["no_laborables"],
             "Días Evaluados":  m["dias_evaluados"],
             "Pct_Asistencia":  m["pct_asistencia"],
         })
 
     return pd.DataFrame(filas, columns=[
-        "Semana", "Asistencias", "Retardos", "Faltas", "Descansos",
+        "Semana", "Asistencias", "Retardos", "Faltas", "Descansos", "No laborables",
         "Días Evaluados", "Pct_Asistencia",
     ])
 
@@ -281,10 +284,10 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
 
     df_ind = estadisticas_por_empleado(df)
     cols_h = ["#", "Nombre", "Tipo", "Especialidad", "Grado", "Periodo",
-              "Días Eval.", "Asist./G./PG", "Guardias", "Post-G.", "Retardos", "Faltas totales", "Falta G.", "Descansos", "Vacac.",
+              "Días Eval.", "Asist./G./PG", "Guardias", "Post-G.", "Retardos", "Faltas totales", "Falta G.", "Descansos", "No laborables", "Vacac.",
               "Incap.", "Permisos", "Festivos", "Rotac.",
               "% Asist.", "% Retardo", "% Falta", "% Presencia"]
-    anchos = [4, 28, 14, 16, 6, 7, 10, 14, 10, 10, 10, 14, 10, 10, 8, 8, 10, 10, 8, 10, 10, 10, 12]
+    anchos = [4, 28, 14, 16, 6, 7, 10, 14, 10, 10, 10, 14, 10, 10, 15, 8, 8, 10, 10, 8, 10, 10, 10, 12]
 
     _hdr(ws1, 2, cols_h, anchos)
 
@@ -300,6 +303,7 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
             row["post_guardias"],     row["retardos"],
             row["faltas"],            row["faltas_guardia"],
             row["descansos"],
+            row["no_laborables"],
             row["vacaciones"],
             row["incapacidad"],       row["permisos"],
             row["festivos"],          row["rotaciones"],
@@ -317,7 +321,7 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
     df_tipo = resumen_por_tipo(df)
     if not df_tipo.empty:
         cols_t = list(df_tipo.columns)
-        anchos_t = [20, 10, 14, 12, 10, 10, 12, 10, 12, 13, 10, 10]
+        anchos_t = [20, 10, 14, 12, 10, 10, 12, 10, 15, 12, 13, 10, 12, 10]
         _hdr(ws2, 2, cols_t, anchos_t[:len(cols_t)])
         for idx, row in df_tipo.iterrows():
             fila = idx + 3
@@ -331,7 +335,7 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
     df_esp = resumen_por_especialidad(df)
     if not df_esp.empty:
         cols_e = list(df_esp.columns)
-        anchos_e = [22, 10, 14, 12, 10, 10, 13, 10]
+        anchos_e = [22, 10, 14, 12, 10, 10, 13, 15, 13, 10]
         _hdr(ws3, 2, cols_e, anchos_e[:len(cols_e)])
         for idx, row in df_esp.iterrows():
             fila = idx + 3
@@ -345,7 +349,7 @@ def exportar_estadisticas_excel(df: pd.DataFrame,
     df_sem = calcular_tendencia_semanal(df)
     if not df_sem.empty:
         cols_s = list(df_sem.columns)
-        anchos_s = [14, 12, 10, 10, 16, 16]
+        anchos_s = [14, 12, 10, 10, 16, 15, 16, 16]
         _hdr(ws4, 2, cols_s, anchos_s[:len(cols_s)])
         for idx, row in df_sem.iterrows():
             fila = idx + 3

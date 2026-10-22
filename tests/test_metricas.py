@@ -53,6 +53,7 @@ class MetricasTests(unittest.TestCase):
         self.assertEqual(m["pct_asistencia"], 100.0)
         self.assertEqual(m["pct_presencia"], 50.0)
         self.assertEqual(m["descansos"], 1)
+        self.assertEqual(m["no_laborables"], 1)
         solo = calcular_metricas(neutral)
         self.assertEqual(solo["dias_evaluados"], 0)
         self.assertEqual(solo["pct_asistencia"], 0.0)
@@ -61,7 +62,7 @@ class MetricasTests(unittest.TestCase):
         df = pd.concat([self.df, registros(["DESCANSO"], id_emp="2")], ignore_index=True)
         esperado = calcular_metricas(df)
         individuales = estadisticas_por_empleado(df)
-        for clave in ("asistencias", "faltas", "retardos", "descansos", "dias_evaluados"):
+        for clave in ("asistencias", "faltas", "retardos", "descansos", "no_laborables", "dias_evaluados"):
             self.assertEqual(individuales[clave].sum(), esperado[clave])
         for tabla in (resumen_por_tipo(df), resumen_por_especialidad(df)):
             fila = tabla.iloc[0]
@@ -69,11 +70,13 @@ class MetricasTests(unittest.TestCase):
             self.assertEqual(fila["Asistencias"], 3)
             self.assertEqual(fila["Faltas"], 2)
             self.assertEqual(fila["Descansos"], 2)
+            self.assertEqual(fila["No laborables"], 1)
             self.assertEqual(fila["Días Evaluados"], 6)
             self.assertEqual(fila["% Asistencia"], esperado["pct_asistencia"])
         semanas = calcular_tendencia_semanal(df)
         self.assertEqual(semanas["Asistencias"].sum(), esperado["asistencias"])
         self.assertEqual(semanas["Faltas"].sum(), esperado["faltas"])
+        self.assertEqual(semanas["No laborables"].sum(), esperado["no_laborables"])
         self.assertEqual(semanas["Días Evaluados"].sum(), esperado["dias_evaluados"])
 
     def test_dias_criticos_incluyen_falta_guardia(self):
@@ -112,6 +115,8 @@ class MetricasTests(unittest.TestCase):
             self.assertEqual(fila["Faltas totales"], 2)
             self.assertEqual(fila["Falta G."], 1)
             self.assertEqual(fila["Días Eval."], 6)
+            self.assertEqual(fila["No laborables"], 1)
+            self.assertEqual(fila["Festivos"], 1)
             self.assertEqual(fila["% Asist."], 50)
             for nombre in ("Por_Tipo", "Por_Especialidad", "Tendencia_Semanal"):
                 hoja = libro[nombre]

@@ -69,6 +69,7 @@ def calcular_metricas(df: pd.DataFrame) -> dict:
         "faltas_ordinarias": c.get("FALTA", 0),
         "faltas_guardia": c.get("FALTA_GUARDIA", 0),
         "descansos": c.get("DESCANSO", 0),
+        "no_laborables": c.get("NO_LABORABLE", 0),
         "vacaciones": c.get("VACACIONES", 0),
         "incapacidad": c.get("INCAPACIDAD", 0),
         "permisos": c.get("PERMISO", 0),
@@ -391,7 +392,7 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
                     estado_ciclo = 'Ordinario'
                     notas_adicionales = "⚠️ Descanso revocado por Falta en Guardia previa. "
             else:
-                # Totalmente excluido: No entra a ciclos, no tiene post-guardia, es ordinario de Lunes a Domingo
+                # Sin grupo de guardia: se evalúa como ordinario sólo en días laborables.
                 estado_ciclo = 'Ordinario'
 
             hora_esp = horarios.get(estado_ciclo, {}).get("hora_inicio", hora_default)
@@ -440,6 +441,12 @@ def procesar_asistencias(datos: dict, reglas: dict) -> pd.DataFrame:
                         else:
                             estatus_dia = "DESCANSO"
                             eval_notas = motivo_descanso
+                    elif dia.weekday() >= 5:
+                        # Una marca biométrica no equivale a una asignación de trabajo.
+                        estatus_dia = "NO_LABORABLE"
+                        eval_notas = "Fin de semana sin asignación"
+                        if marcas_hoy:
+                            eval_notas += " | Marcas registradas sin turno asignado; revisar"
                     else:
                         estatus_dia, eval_notas = _evaluar_turno_ordinario(marcas_hoy, hora_esp, tol_retardo, tol_falta)
 

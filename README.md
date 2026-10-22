@@ -2,7 +2,7 @@
 
 **De registros biométricos a un calendario de asistencia auditable.** SGAM es una aplicación de escritorio para Windows que cruza el padrón de internos y residentes, los roles de guardia y las incidencias con reportes de entrada y salida. Normaliza archivos heterogéneos, evalúa cada día con reglas explícitas y entrega vistas y reportes Excel para revisión administrativa.
 
-**Versión 2.3.4** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
+**Versión 2.3.5** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
 
 **Autores:** Alan Jiménez y Fabrizzio Ramírez · [English documentation](README.en.md)
 
@@ -63,7 +63,7 @@ El comando crea `demo_output/demo_plantilla.xlsx` y `demo_output/demo_scanner.xl
 3. Elige la letra inicial A y pulsa **Procesar Asistencias**.
 4. Explora el calendario, los filtros y la exportación a Excel.
 
-La demostración usa jornadas ordinarias; las pruebas automatizadas cubren también la prioridad de guardias y descansos. El generador se detiene si los archivos de salida ya existen para evitar sobrescribir datos.
+La demostración usa jornadas ordinarias entre semana: los sábados sin asignación aparecen como **No laborable** y los domingos tienen un descanso explícito. Las pruebas automatizadas cubren también la prioridad de guardias y descansos. El generador se detiene si los archivos de salida ya existen para evitar sobrescribir datos.
 
 ## Contrato de entrada
 
@@ -79,13 +79,13 @@ La plantilla vacía [Plantilla SGAM V2 sin datos.xlsx](Plantilla%20SGAM%20V2%20s
 | `6_Dias_Festivos` (opcional) | Motivo y fecha en las dos primeras columnas |
 | `7_Descansos` (opcional) | `ID`, `Dia` y fecha opcional |
 
-El catálogo admite universidad, especialidad, subespecialidad, alta especialidad, período de ingreso y foto. Los IDs numéricos equivalentes se unifican; por ejemplo, `00123` y `123.0` se interpretan como `123`. Los residentes R1–R5 se reconocen como activos. El rol A–D determina el grupo de guardia; una rotación vacía se evalúa como jornada ordinaria.
+El catálogo admite universidad, especialidad, subespecialidad, alta especialidad, período de ingreso y foto. Los IDs numéricos equivalentes se unifican; por ejemplo, `00123` y `123.0` se interpretan como `123`. Los residentes R1–R5 se reconocen como activos. El rol A–D determina el grupo de guardia; una rotación vacía se evalúa como jornada ordinaria entre semana.
 
 Para un reporte genérico `.xlsx` o `.csv`, usa las columnas `ID`, `Fecha`, `Entrada` y `Salida`. También se admiten matrices ZKTeco y reportes de excepciones `.xls`/`.xlsx`. Si una guardia termina al día siguiente, incluye esa salida en el archivo de origen.
 
 ## Reglas y métricas
 
-La evaluación sigue este orden: **incidencia registrada → guardia → postguardia → festivo → descanso → jornada ordinaria**. En festivos y descansos con marcas se evalúa la asistencia; una falta de guardia revoca la postguardia siguiente. Los horarios y tolerancias actuales están en `core.py` y `ingestion.py`; la interfaz no edita reglas ni carga una hoja `1_Reglas_ID`.
+La evaluación sigue este orden: **incidencia registrada (incluida rotación) → guardia → postguardia → festivo → descanso explícito → fin de semana sin asignación → jornada ordinaria**. Un sábado o domingo sin turno ni incidencia asignada es **No laborable**, nunca Falta; una marca biométrica aislada en ese día se anota para revisión, sin convertirla en turno asignado. En festivos y descansos explícitos con marcas se evalúa la asistencia; una falta de guardia revoca la postguardia siguiente. Los horarios y tolerancias actuales están en `core.py` y `ingestion.py`; la interfaz no edita reglas ni carga una hoja `1_Reglas_ID`.
 
 | Indicador | Definición |
 | --- | --- |
@@ -95,7 +95,7 @@ La evaluación sigue este orden: **incidencia registrada → guardia → postgua
 | % asistencia | Asistencias / días evaluados × 100 |
 | % presencia física | (`ASISTENCIA + GUARDIA + RETARDO`) / días evaluados × 100 |
 
-Vacaciones, permisos, festivos y descansos quedan fuera del denominador de desempeño. La gráfica de distribución del calendario sí muestra todos los días, por lo que sus porcentajes tienen otra base.
+Vacaciones, permisos, festivos, descansos y días no laborables quedan fuera del denominador de desempeño. En Excel, **NL** (No laborable) y **Fe** (Festivo) tienen celdas y recuentos separados; la leyenda usa rellenos de celda para mostrar sus colores. La gráfica de distribución del calendario sí muestra todos los días, por lo que sus porcentajes tienen otra base.
 
 ## Calidad y empaquetado
 

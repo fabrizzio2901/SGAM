@@ -1026,13 +1026,13 @@ class SGAMApp(ctk.CTk):
             ("Asist./G./PG", 90, "center"), ("Guardias", 70, "center"),
             ("Post-G.", 65, "center"), ("Retardos", 65, "center"),
             ("Faltas totales", 90, "center"), ("Falta G.", 65, "center"),
-            ("Descansos", 80, "center"),
+            ("Descansos", 80, "center"), ("No laborables", 105, "center"),
             ("% Asist.", 65, "center"),
             ("% Falta", 60, "center"), ("% Presencia", 80, "center"),
         ], [
             "Nombre_Completo", "Tipo", "Especialidad", "Grado",
             "Periodo_Ingreso", "dias_evaluados", "asistencias", "guardias", "post_guardias", "retardos",
-            "faltas", "faltas_guardia", "descansos", "pct_asistencia", "pct_falta", "pct_presencia",
+            "faltas", "faltas_guardia", "descansos", "no_laborables", "pct_asistencia", "pct_falta", "pct_presencia",
         ])
 
         df_tipo = resumen_por_tipo(self._df)

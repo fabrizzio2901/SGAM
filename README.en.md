@@ -2,7 +2,7 @@
 
 **From biometric records to an auditable attendance calendar.** SGAM is a Windows desktop application that reconciles intern and resident rosters, duty schedules and recorded absences with check-in/check-out reports. It normalizes heterogeneous files, applies explicit daily rules and produces views and Excel reports for administrative review.
 
-**Version 2.3.4** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
+**Version 2.3.5** · Python · CustomTkinter · pandas · openpyxl · Matplotlib
 
 **Authors:** Alan Jiménez and Fabrizzio Ramírez · [Documentación en español](README.md)
 
@@ -56,7 +56,7 @@ If PowerShell prevents environment activation, use `.\.venv\Scripts\python.exe` 
 python examples/generate_demo.py
 ```
 
-This creates `demo_output/demo_plantilla.xlsx` and `demo_output/demo_scanner.xlsx` with **two fictional people** and April 2026 punches. Load the template and scanner file in the app, select starting group A, click **Procesar Asistencias**, then explore the calendar, filters and Excel exports. The demo uses ordinary shifts; automated tests also cover duty/rest precedence. The generator refuses to overwrite existing output files.
+This creates `demo_output/demo_plantilla.xlsx` and `demo_output/demo_scanner.xlsx` with **two fictional people** and April 2026 punches. Load the template and scanner file in the app, select starting group A, click **Procesar Asistencias**, then explore the calendar, filters and Excel exports. The demo uses ordinary weekday shifts: unassigned Saturdays appear as **Non-working**, while Sundays have an explicit rest assignment. Automated tests also cover duty/rest precedence. The generator refuses to overwrite existing output files.
 
 ## Input contract
 
@@ -72,13 +72,13 @@ The empty [SGAM workbook template](Plantilla%20SGAM%20V2%20sin%20datos.xlsx) con
 | Optional `6_Dias_Festivos` | Reason and date in the first two columns |
 | Optional `7_Descansos` | `ID`, `Dia`, optional date |
 
-The roster also supports university, specialty, subspecialty, advanced specialty, intake period and a photo column. Equivalent numeric IDs are normalized; for example, `00123` and `123.0` become `123`. Residents with R1–R5 status are active. An A–D rotation assigns a duty group; an empty rotation is evaluated as an ordinary shift.
+The roster also supports university, specialty, subspecialty, advanced specialty, intake period and a photo column. Equivalent numeric IDs are normalized; for example, `00123` and `123.0` become `123`. Residents with R1–R5 status are active. An A–D rotation assigns a duty group; an empty rotation is evaluated as an ordinary weekday shift.
 
 Generic `.xlsx` or `.csv` scanner files need `ID`, `Fecha`, `Entrada` and `Salida` columns. ZKTeco matrices and exception reports in `.xls`/`.xlsx` are also supported. Include the next-day checkout for duty shifts that cross month end.
 
 ## Rules and metrics
 
-The evaluation order is **recorded absence → duty → post-duty → holiday → rest → ordinary shift**. Punches on holidays and rest days are still evaluated; a failed duty shift cancels the following post-duty status. Current schedules and tolerances live in `core.py` and `ingestion.py`. The UI does not edit rules or load a `1_Reglas_ID` worksheet.
+The evaluation order is **recorded absence (including rotation) → duty → post-duty → holiday → explicit rest → unassigned weekend → ordinary shift**. A Saturday or Sunday without an assigned shift or incident is **Non-working**, never Absent. An isolated punch on such a day is noted for review; it does not create a shift assignment. Punches on holidays and explicit rest days are still evaluated; a failed duty shift cancels the following post-duty status. Current schedules and tolerances live in `core.py` and `ingestion.py`. The UI does not edit rules or load a `1_Reglas_ID` worksheet.
 
 | Metric | Definition |
 | --- | --- |
@@ -88,7 +88,7 @@ The evaluation order is **recorded absence → duty → post-duty → holiday �
 | Attendance rate | Attendance / evaluated days × 100 |
 | Physical presence rate | (`ASISTENCIA + GUARDIA + RETARDO`) / evaluated days × 100 |
 
-Vacations, leave, holidays and rest days are excluded from the performance denominator. The calendar distribution chart includes all days and therefore uses a different denominator.
+Vacations, leave, holidays, rest days and non-working days are excluded from the performance denominator. In Excel, **NL** (Non-working) and **Fe** (Holiday) have separate cells and counts; the legend uses filled cells to display their colors. The calendar distribution chart includes all days and therefore uses a different denominator.
 
 ## Verification and packaging
 
